@@ -1,0 +1,18 @@
+[package]
+name = "s3d-control"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Modular Map Controls & Overlay Widgets for S3D Map Engine"
+
+[dependencies]
+s3d-core = { workspace = true, features = ["egui"] }
+egui = { workspace = true }
+egui-phosphor = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+
+[lib]
+name = "s3d_control"
+path = "src/lib.rs"

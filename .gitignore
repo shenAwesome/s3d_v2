@@ -1,0 +1,18 @@
+# Rust target
+/target/
+**/*.rs.bk
+
+# Cargo
+Cargo.lock
+
+# Trunk dist
+/dist/
+.cache/
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/control",
+    "crates/studio",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+authors = ["S3D Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/s3d/s3d"
+
+[workspace.dependencies]
+# Internal crates
+s3d-core = { path = "crates/core" }
+s3d-control = { path = "crates/control" }
+
+# UI Framework
+egui = "0.31"
+egui-wgpu = "0.31"
+eframe = { version = "0.31", default-features = false }
+egui-phosphor = "0.9"
+
+# GPU & 3D Math
+wgpu = "24.0"
+glam = { version = "0.29", features = ["bytemuck", "serde"] }
+bytemuck = { version = "1.21", features = ["derive"] }
+
+# GIS & Geometry
+geojson = "0.24"
+earcutr = "0.4"
+tiny-skia = "0.11"
+
+# Solar & Time
+chrono = { version = "0.4", features = ["serde"] }
+web-time = "1.1"
+
+# Serialization & Utilities
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+
+# Image & Data Formats
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+lerc-rs = "0.5"
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+
+# Desktop-specific
+ureq = { version = "2.10", features = ["tls"] }
+rayon = "1.10"
+rfd = "0.15"
+
+# WASM-specific
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "HtmlAnchorElement",
+    "Blob",
+    "BlobPropertyBag",
+    "Storage",
+    "Url",
+    "Location",
+    "History",
+    "console",
+] }
+ehttp = "0.5"
+getrandom = { version = "0.2", features = ["js"] }
+console_error_panic_hook = "0.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

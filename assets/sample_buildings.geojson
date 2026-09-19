@@ -1,0 +1,367 @@
+{
+  "type": "FeatureCollection",
+  "name": "Melbourne CBD 3D Buildings & Landmarks",
+  "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "eureka_tower",
+      "properties": {
+        "name": "Eureka Tower",
+        "building": "skyscraper",
+        "height": 297.3,
+        "min_height": 0.0,
+        "levels": 91,
+        "use": "residential / observation",
+        "architect": "Fender Katsalidis Architects"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9642, -37.8212],
+            [144.9648, -37.8212],
+            [144.9648, -37.8218],
+            [144.9642, -37.8218],
+            [144.9642, -37.8212]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "rialto_towers",
+      "properties": {
+        "name": "Rialto Towers",
+        "building": "commercial",
+        "height": 251.0,
+        "min_height": 0.0,
+        "levels": 63,
+        "use": "office / hotel"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9575, -37.8182],
+            [144.9583, -37.8182],
+            [144.9583, -37.8189],
+            [144.9575, -37.8189],
+            [144.9575, -37.8182]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "flinders_street_station",
+      "properties": {
+        "name": "Flinders Street Railway Station",
+        "building": "transportation",
+        "height": 38.0,
+        "min_height": 0.0,
+        "levels": 4,
+        "heritage": "state",
+        "opened": "1910"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9660, -37.8175],
+            [144.9682, -37.8178],
+            [144.9681, -37.8183],
+            [144.9659, -37.8180],
+            [144.9660, -37.8175]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "federation_square_ngv",
+      "properties": {
+        "name": "Ian Potter Centre: NGV Australia",
+        "building": "museum / art gallery",
+        "height": 24.0,
+        "min_height": 0.0,
+        "levels": 4,
+        "architect": "Lab Architecture Studio"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9694, -37.8175],
+            [144.9702, -37.8176],
+            [144.9700, -37.8184],
+            [144.9694, -37.8183],
+            [144.9694, -37.8175]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "federation_square_acmi",
+      "properties": {
+        "name": "ACMI (Australian Centre for the Moving Image)",
+        "building": "cultural / cinema",
+        "height": 20.0,
+        "min_height": 0.0,
+        "levels": 3,
+        "architect": "Lab Architecture Studio"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9686, -37.8179],
+            [144.9693, -37.8180],
+            [144.9692, -37.8185],
+            [144.9685, -37.8184],
+            [144.9686, -37.8179]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "federation_square_atrium",
+      "properties": {
+        "name": "The Atrium & Deakin Edge",
+        "building": "civic / atrium",
+        "height": 16.0,
+        "min_height": 0.0,
+        "levels": 2,
+        "architect": "Lab Architecture Studio"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9692, -37.8176],
+            [144.9695, -37.8176],
+            [144.9694, -37.8183],
+            [144.9691, -37.8183],
+            [144.9692, -37.8176]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "101_collins",
+      "properties": {
+        "name": "101 Collins Street",
+        "building": "commercial",
+        "height": 260.0,
+        "min_height": 0.0,
+        "levels": 57,
+        "use": "premium office"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9698, -37.8142],
+            [144.9706, -37.8142],
+            [144.9706, -37.8149],
+            [144.9698, -37.8149],
+            [144.9698, -37.8142]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "120_collins",
+      "properties": {
+        "name": "120 Collins Street",
+        "building": "commercial",
+        "height": 265.0,
+        "min_height": 0.0,
+        "levels": 52,
+        "use": "premium office"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9687, -37.8140],
+            [144.9695, -37.8140],
+            [144.9695, -37.8148],
+            [144.9687, -37.8148],
+            [144.9687, -37.8140]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "melbourne_town_hall",
+      "properties": {
+        "name": "Melbourne Town Hall",
+        "building": "civic",
+        "height": 45.0,
+        "min_height": 0.0,
+        "levels": 5,
+        "heritage": "state",
+        "opened": "1870"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9662, -37.8150],
+            [144.9670, -37.8150],
+            [144.9670, -37.8157],
+            [144.9662, -37.8157],
+            [144.9662, -37.8150]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "state_library_vic",
+      "properties": {
+        "name": "State Library Victoria",
+        "building": "educational / library",
+        "height": 36.0,
+        "min_height": 0.0,
+        "levels": 4,
+        "opened": "1856"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9645, -37.8095],
+            [144.9662, -37.8095],
+            [144.9662, -37.8105],
+            [144.9645, -37.8105],
+            [144.9645, -37.8095]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "crown_casino_complex",
+      "properties": {
+        "name": "Crown Melbourne Complex",
+        "building": "commercial / entertainment",
+        "height": 150.0,
+        "min_height": 0.0,
+        "levels": 43,
+        "use": "hotel / resort"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9580, -37.8220],
+            [144.9610, -37.8220],
+            [144.9610, -37.8235],
+            [144.9580, -37.8235],
+            [144.9580, -37.8220]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "southern_cross_station",
+      "properties": {
+        "name": "Southern Cross Station",
+        "building": "transportation",
+        "height": 32.0,
+        "min_height": 0.0,
+        "levels": 3,
+        "architect": "Grimshaw Architects"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9515, -37.8180],
+            [144.9540, -37.8180],
+            [144.9540, -37.8205],
+            [144.9515, -37.8205],
+            [144.9515, -37.8180]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cbd_block_1",
+      "properties": {
+        "name": "Swanston & Bourke Block",
+        "building": "commercial",
+        "height": 65.0,
+        "min_height": 0.0,
+        "levels": 18
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9655, -37.8130],
+            [144.9668, -37.8130],
+            [144.9668, -37.8140],
+            [144.9655, -37.8140],
+            [144.9655, -37.8130]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cbd_block_2",
+      "properties": {
+        "name": "Elizabeth & Lonsdale Block",
+        "building": "commercial / residential",
+        "height": 110.0,
+        "min_height": 0.0,
+        "levels": 32
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9620, -37.8115],
+            [144.9635, -37.8115],
+            [144.9635, -37.8125],
+            [144.9620, -37.8125],
+            [144.9620, -37.8115]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "cbd_block_3",
+      "properties": {
+        "name": "Queen & Collins Financial Block",
+        "building": "commercial",
+        "height": 175.0,
+        "min_height": 0.0,
+        "levels": 45
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [144.9600, -37.8160],
+            [144.9615, -37.8160],
+            [144.9615, -37.8170],
+            [144.9600, -37.8170],
+            [144.9600, -37.8160]
+          ]
+        ]
+      }
+    }
+  ]
+}

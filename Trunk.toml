@@ -1,0 +1,12 @@
+[build]
+target = "demo.html"
+example = "showcase"
+release = false
+
+[watch]
+watch = ["crates/core/src", "crates/core/examples"]
+ignore = ["target"]
+
+[serve]
+port = 8080
+open = false
