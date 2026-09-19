@@ -274,6 +274,9 @@ pub fn get_initial_example() -> CoreExample {
 
 impl ShowcaseApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Force dark theme so all widgets (code editor, dropdowns, sliders) match the dark panel fills
+        cc.egui_ctx.set_theme(egui::Theme::Dark);
+
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
         let mut map = MapEngine::new(ProjectOrigin::from_geo(melbourne));
 
