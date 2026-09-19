@@ -45,6 +45,34 @@ impl CoreExample {
         ]
     }
 
+    pub fn id(&self) -> &'static str {
+        match self {
+            CoreExample::SimpleMap => "simple_map",
+            CoreExample::BasemapSwitcher => "basemap_switcher",
+            CoreExample::GlobeProjection => "globe_projection",
+            CoreExample::GeoJsonBuildings => "geojson_buildings",
+            CoreExample::SunAndShadows => "sun_and_shadows",
+            CoreExample::TerrainElevation => "terrain_elevation",
+            CoreExample::CameraFlyTo => "camera_navigation",
+            CoreExample::CoordinatePicking => "coordinate_picking",
+        }
+    }
+
+    pub fn from_id(s: &str) -> Option<CoreExample> {
+        let s = s.trim().to_ascii_lowercase().replace('-', "_");
+        match s.as_str() {
+            "simple_map" | "simple" | "quickstart" => Some(CoreExample::SimpleMap),
+            "basemap_switcher" | "basemap" | "basemaps" => Some(CoreExample::BasemapSwitcher),
+            "globe_projection" | "globe" | "projection" => Some(CoreExample::GlobeProjection),
+            "geojson_buildings" | "buildings" | "geojson" => Some(CoreExample::GeoJsonBuildings),
+            "sun_and_shadows" | "sun" | "solar" | "shadows" => Some(CoreExample::SunAndShadows),
+            "terrain_elevation" | "terrain" | "elevation" | "dem" => Some(CoreExample::TerrainElevation),
+            "camera_navigation" | "camera" | "flyto" => Some(CoreExample::CameraFlyTo),
+            "coordinate_picking" | "picking" | "coordinates" => Some(CoreExample::CoordinatePicking),
+            _ => None,
+        }
+    }
+
     pub fn title(&self) -> &'static str {
         match self {
             CoreExample::SimpleMap => "Simple Map (Quickstart)",
@@ -193,6 +221,64 @@ pub struct ShowcaseApp {
     inspected_building: Option<String>,
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn get_example_from_url() -> Option<CoreExample> {
+    let window = web_sys::window()?;
+    let location = window.location();
+    if let Ok(hash) = location.hash() {
+        let clean = hash.trim_start_matches('#').trim();
+        if !clean.is_empty() {
+            if let Some(ex) = CoreExample::from_id(clean) {
+                return Some(ex);
+            }
+        }
+    }
+    if let Ok(search) = location.search() {
+        let clean = search.trim_start_matches('?');
+        for part in clean.split('&') {
+            let mut kv = part.split('=');
+            if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                if k == "example" || k == "ex" {
+                    if let Some(ex) = CoreExample::from_id(v) {
+                        return Some(ex);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn sync_url_with_example(example: CoreExample) {
+    if let Some(window) = web_sys::window() {
+        let location = window.location();
+        let target_hash = format!("#{}", example.id());
+        if let Ok(cur_hash) = location.hash() {
+            if cur_hash != target_hash {
+                let _ = location.set_hash(&target_hash);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_initial_example() -> CoreExample {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        let clean = arg.trim_start_matches("--example=").trim_start_matches("--");
+        if let Some(ex) = CoreExample::from_id(clean) {
+            return ex;
+        }
+    }
+    CoreExample::SimpleMap
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_initial_example() -> CoreExample {
+    get_example_from_url().unwrap_or(CoreExample::SimpleMap)
+}
+
 impl ShowcaseApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
@@ -214,9 +300,10 @@ impl ShowcaseApp {
             map.set_renderer(renderer);
         }
 
+        let initial_example = get_initial_example();
         let mut app = Self {
             map,
-            active_example: CoreExample::SimpleMap,
+            active_example: initial_example,
             view_mode: ViewMode::MapAndCode,
             last_copied_at: None,
             selected_provider: BasemapProvider::OpenStreetMap,
@@ -226,7 +313,7 @@ impl ShowcaseApp {
             inspected_building: None,
         };
 
-        app.apply_example_setup(CoreExample::SimpleMap);
+        app.apply_example_setup(initial_example);
         app
     }
 
@@ -234,6 +321,9 @@ impl ShowcaseApp {
         self.active_example = example;
         self.picked_geo = None;
         self.inspected_building = None;
+
+        #[cfg(target_arch = "wasm32")]
+        sync_url_with_example(example);
 
         match example {
             CoreExample::SimpleMap => {
@@ -365,6 +455,15 @@ impl eframe::App for ShowcaseApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.map.update(dt);
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(url_ex) = get_example_from_url() {
+                if url_ex != self.active_example {
+                    self.apply_example_setup(url_ex);
+                }
+            }
+        }
 
         if self.map.camera.is_animating()
             || self.map.has_new_gpu_tiles
