@@ -200,17 +200,10 @@ if let Some(hit_world) = map.intersect_scene_or_terrain(&ray) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    MapAndCode,
-    MapOnly,
-    CodeOnly,
-}
-
 pub struct ShowcaseApp {
     map: MapEngine,
     active_example: CoreExample,
-    view_mode: ViewMode,
+    code_buffer: String,
     last_copied_at: Option<f64>,
 
     // Minimal parameters matching the displayed code
@@ -304,7 +297,7 @@ impl ShowcaseApp {
         let mut app = Self {
             map,
             active_example: initial_example,
-            view_mode: ViewMode::MapAndCode,
+            code_buffer: initial_example.code_snippet().to_string(),
             last_copied_at: None,
             selected_provider: BasemapProvider::OpenStreetMap,
             sim_hour: 14.0,
@@ -319,6 +312,7 @@ impl ShowcaseApp {
 
     fn apply_example_setup(&mut self, example: CoreExample) {
         self.active_example = example;
+        self.code_buffer = example.code_snippet().to_string();
         self.picked_geo = None;
         self.inspected_building = None;
 
@@ -495,13 +489,6 @@ impl eframe::App for ShowcaseApp {
 
                     ui.separator();
 
-                    // View Mode Toggle
-                    ui.selectable_value(&mut self.view_mode, ViewMode::MapAndCode, "Map & Code");
-                    ui.selectable_value(&mut self.view_mode, ViewMode::MapOnly, "Map Only");
-                    ui.selectable_value(&mut self.view_mode, ViewMode::CodeOnly, "Code Only");
-
-                    ui.separator();
-
                     // --- Feature-Specific Minimal Controls (Directly Derived from Code) ---
                     match self.active_example {
                         CoreExample::BasemapSwitcher => {
@@ -569,63 +556,53 @@ impl eframe::App for ShowcaseApp {
                 });
             });
 
-        // --- Bottom Code Section (OpenLayers Style) ---
-        if self.view_mode != ViewMode::MapOnly {
-            let height = if self.view_mode == ViewMode::CodeOnly {
-                ctx.screen_rect().height() - 44.0
-            } else {
-                240.0
-            };
+        // --- Right Side Panel: Code Section (Selectable & Copyable, OpenLayers Style) ---
+        let initial_panel_width = (ctx.screen_rect().width() * 0.45).clamp(340.0, 680.0);
+        egui::SidePanel::right("code_side_panel")
+            .resizable(true)
+            .default_width(initial_panel_width)
+            .min_width(280.0)
+            .max_width(ctx.screen_rect().width() * 0.75)
+            .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(15, 17, 23)).inner_margin(12.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(self.active_example.title()).strong().color(egui::Color32::WHITE));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let current_time = ctx.input(|i| i.time);
+                        let is_recently_copied = self
+                            .last_copied_at
+                            .map_or(false, |t| current_time - t < 2.0);
 
-            egui::TopBottomPanel::bottom("code_section_panel")
-                .resizable(self.view_mode == ViewMode::MapAndCode)
-                .min_height(140.0)
-                .max_height(500.0)
-                .default_height(height)
-                .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(15, 17, 23)).inner_margin(12.0))
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(self.active_example.title()).strong().color(egui::Color32::WHITE));
-                        ui.label(egui::RichText::new(format!("— {}", self.active_example.description())).color(egui::Color32::GRAY));
+                        if is_recently_copied {
+                            ui.label(egui::RichText::new("✓ Copied!").color(egui::Color32::from_rgb(52, 211, 153)));
+                        } else if ui.button("📋 Copy All").clicked() {
+                            ctx.copy_text(self.code_buffer.clone());
+                            self.last_copied_at = Some(current_time);
+                        }
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let current_time = ctx.input(|i| i.time);
-                            let is_recently_copied = self
-                                .last_copied_at
-                                .map_or(false, |t| current_time - t < 2.0);
-
-                            if is_recently_copied {
-                                ui.label(egui::RichText::new("✓ Copied!").color(egui::Color32::from_rgb(52, 211, 153)));
-                            } else if ui.button("📋 Copy Code").clicked() {
-                                ctx.copy_text(self.active_example.code_snippet().to_string());
-                                self.last_copied_at = Some(current_time);
-                            }
-
-                            ui.label(egui::RichText::new("Rust (s3d-core)").monospace().color(egui::Color32::from_rgb(147, 197, 253)));
-                        });
+                        ui.label(egui::RichText::new("Rust (s3d-core)").monospace().color(egui::Color32::from_rgb(147, 197, 253)));
                     });
-
-                    ui.separator();
-
-                    // Scrollable Code Snippet Container
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            let mut snippet = self.active_example.code_snippet();
-                            ui.add(
-                                egui::TextEdit::multiline(&mut snippet)
-                                    .font(egui::TextStyle::Monospace)
-                                    .text_color(egui::Color32::from_rgb(226, 232, 240))
-                                    .desired_width(f32::INFINITY)
-                                    .lock_focus(true)
-                                    .interactive(false),
-                            );
-                        });
                 });
-        }
 
-        // --- Central Map Viewport ---
-        if self.view_mode != ViewMode::CodeOnly {
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new(self.active_example.description()).small().color(egui::Color32::GRAY));
+                ui.separator();
+
+                // Selectable & Copyable Code Container
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.code_buffer)
+                                .font(egui::TextStyle::Monospace)
+                                .text_color(egui::Color32::from_rgb(226, 232, 240))
+                                .desired_width(f32::INFINITY)
+                                .lock_focus(true),
+                        );
+                    });
+            });
+
+        // --- Left Area: Central 3D Map Viewport ---
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(10, 12, 16)))
                 .show(ctx, |ui| {
@@ -664,7 +641,6 @@ impl eframe::App for ShowcaseApp {
                         }
                     }
                 });
-        }
     }
 }
 
@@ -723,7 +699,19 @@ fn main() {
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .expect("s3d_canvas was not a HtmlCanvasElement");
 
-        let web_options = eframe::WebOptions::default();
+        let web_options = eframe::WebOptions {
+            wgpu_options: egui_wgpu::WgpuConfiguration {
+                wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {
+                    instance_descriptor: wgpu::InstanceDescriptor {
+                        backends: wgpu::Backends::all(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         eframe::WebRunner::new()
             .start(
                 canvas,
