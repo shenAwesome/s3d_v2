@@ -1,7 +1,7 @@
 //! Basemap Streaming & 3D Terrain Example — S3D Core
 //!
 //! Demonstrates live multi-resolution raster tile streaming from web GIS services
-//! (OSM, Esri Satellite, CartoDB) and 3D digital elevation model (DEM) terrain integration.
+//! (OSM, Esri Satellite) and 3D digital elevation model (DEM) terrain integration.
 //!
 //! Run with:
 //! `cargo run --example basemap_streaming`
@@ -32,7 +32,7 @@ impl BasemapStreamingApp {
 
         // Enable basemap & 3D terrain
         map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::EsriImagery;
+        map.basemap.provider = BasemapProvider::OpenStreetMap;
         map.terrain.is_enabled = true;
         map.terrain.height_exaggeration = 1.2;
 
@@ -47,7 +47,7 @@ impl BasemapStreamingApp {
 
         Self {
             map,
-            selected_provider: BasemapProvider::EsriImagery,
+            selected_provider: BasemapProvider::OpenStreetMap,
         }
     }
 
@@ -101,14 +101,7 @@ impl eframe::App for BasemapStreamingApp {
                     ui.checkbox(&mut self.map.basemap.is_enabled, "Enable Basemap");
 
                     let mut provider_changed = false;
-                    for &prov in &[
-                        BasemapProvider::EsriImagery,
-                        BasemapProvider::OpenStreetMap,
-                        BasemapProvider::CartoLight,
-                        BasemapProvider::CartoDark,
-                        BasemapProvider::EsriTopo,
-                        BasemapProvider::EsriStreet,
-                    ] {
+                    for &prov in BasemapProvider::all() {
                         if ui
                             .selectable_value(&mut self.selected_provider, prov, prov.display_name())
                             .clicked()

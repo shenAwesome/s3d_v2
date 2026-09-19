@@ -130,12 +130,10 @@ impl DiskCacheManager {
     /// Cache file path for a basemap tile: .cache/basemap/{provider_id}/{z}/{x}_{y}.bin
     pub fn basemap_tile_path(provider: BasemapProvider, coord: TileCoord) -> PathBuf {
         let prov_str = match provider {
-            BasemapProvider::EsriImagery => "esri_imagery",
-            BasemapProvider::EsriTopo => "esri_topo",
-            BasemapProvider::EsriStreet => "esri_street",
-            BasemapProvider::CartoDark => "carto_dark",
-            BasemapProvider::CartoLight => "carto_light",
             BasemapProvider::OpenStreetMap => "osm",
+            BasemapProvider::EsriStreet => "esri_street",
+            BasemapProvider::EsriTopo => "esri_topo",
+            BasemapProvider::EsriImagery => "esri_imagery",
             BasemapProvider::None => "none",
         };
         Self::get_basemap_cache_root()

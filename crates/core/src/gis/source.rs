@@ -128,7 +128,7 @@ pub trait TileSource: Source {
     ) -> RequestHandle;
 }
 
-/// Built-in XYZ Raster imagery tile source (CartoDB, OpenStreetMap, Esri Imagery)
+/// Built-in XYZ Raster imagery tile source (OpenStreetMap, Esri Imagery)
 pub struct XyzRasterSource {
     id: SourceId,
     name: String,

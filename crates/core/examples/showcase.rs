@@ -78,7 +78,7 @@ impl ShowcaseApp {
             sim_month: 12,
             animating_sun: false,
             anim_speed: 1.0,
-            selected_provider: BasemapProvider::EsriImagery,
+            selected_provider: BasemapProvider::OpenStreetMap,
             measurement: MeasurementEngine::new(),
             measured_points_geo: Vec::new(),
             last_inspected_geo: None,
@@ -242,13 +242,7 @@ impl eframe::App for ShowcaseApp {
                         ui.label(egui::RichText::new("Live multi-resolution raster tiles & 3D DEM elevation").small().color(egui::Color32::GRAY));
                         ui.separator();
 
-                        for &prov in &[
-                            BasemapProvider::EsriImagery,
-                            BasemapProvider::OpenStreetMap,
-                            BasemapProvider::CartoLight,
-                            BasemapProvider::CartoDark,
-                            BasemapProvider::EsriTopo,
-                        ] {
+                        for &prov in BasemapProvider::all() {
                             if ui.selectable_value(&mut self.selected_provider, prov, prov.display_name()).clicked() {
                                 self.map.basemap.provider = self.selected_provider;
                                 self.map.basemap.reset_cache();

@@ -12,12 +12,10 @@ use std::thread;
 /// Supported Basemap Services
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BasemapProvider {
-    EsriImagery,
-    EsriTopo,
-    EsriStreet,
-    CartoDark,
-    CartoLight,
     OpenStreetMap,
+    EsriStreet,
+    EsriTopo,
+    EsriImagery,
     None,
 }
 
@@ -30,53 +28,41 @@ impl Default for BasemapProvider {
 impl BasemapProvider {
     pub fn all() -> &'static [BasemapProvider] {
         &[
-            BasemapProvider::EsriImagery,
-            BasemapProvider::CartoDark,
-            BasemapProvider::CartoLight,
             BasemapProvider::OpenStreetMap,
-            BasemapProvider::EsriTopo,
             BasemapProvider::EsriStreet,
+            BasemapProvider::EsriTopo,
+            BasemapProvider::EsriImagery,
             BasemapProvider::None,
         ]
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            BasemapProvider::EsriImagery => "Esri World Imagery (Satellite)",
-            BasemapProvider::EsriTopo => "Esri World Topo",
-            BasemapProvider::EsriStreet => "Esri World Streets",
-            BasemapProvider::CartoDark => "CartoDB Dark Matter",
-            BasemapProvider::CartoLight => "CartoDB Positron",
             BasemapProvider::OpenStreetMap => "OpenStreetMap Standard",
+            BasemapProvider::EsriStreet => "Esri World Streets",
+            BasemapProvider::EsriTopo => "Esri World Topo",
+            BasemapProvider::EsriImagery => "Esri World Imagery (Satellite)",
             BasemapProvider::None => "None (CAD Grid)",
         }
     }
 
     pub fn tile_url(&self, z: u32, x: u32, y: u32) -> Option<String> {
         match self {
-            BasemapProvider::EsriImagery => Some(format!(
-                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{}/{}/{}",
+            BasemapProvider::OpenStreetMap => Some(format!(
+                "https://tile.openstreetmap.org/{}/{}/{}.png",
+                z, x, y
+            )),
+            BasemapProvider::EsriStreet => Some(format!(
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{}/{}/{}",
                 z, y, x
             )),
             BasemapProvider::EsriTopo => Some(format!(
                 "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{}/{}/{}",
                 z, y, x
             )),
-            BasemapProvider::EsriStreet => Some(format!(
-                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{}/{}/{}",
+            BasemapProvider::EsriImagery => Some(format!(
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{}/{}/{}",
                 z, y, x
-            )),
-            BasemapProvider::CartoDark => Some(format!(
-                "https://basemaps.cartocdn.com/rastertiles/dark_all/{}/{}/{}.png",
-                z, x, y
-            )),
-            BasemapProvider::CartoLight => Some(format!(
-                "https://basemaps.cartocdn.com/rastertiles/light_all/{}/{}/{}.png",
-                z, x, y
-            )),
-            BasemapProvider::OpenStreetMap => Some(format!(
-                "https://tile.openstreetmap.org/{}/{}/{}.png",
-                z, x, y
             )),
             BasemapProvider::None => None,
         }
@@ -84,13 +70,10 @@ impl BasemapProvider {
 
     pub fn attribution(&self) -> &'static str {
         match self {
+            BasemapProvider::OpenStreetMap => "© OpenStreetMap contributors",
             BasemapProvider::EsriImagery | BasemapProvider::EsriTopo | BasemapProvider::EsriStreet => {
                 "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics"
             }
-            BasemapProvider::CartoDark | BasemapProvider::CartoLight => {
-                "© OpenStreetMap contributors, © CARTO"
-            }
-            BasemapProvider::OpenStreetMap => "© OpenStreetMap contributors",
             BasemapProvider::None => "",
         }
     }
@@ -544,7 +527,7 @@ impl BasemapManager {
         }
 
         Self {
-            provider: BasemapProvider::CartoLight,
+            provider: BasemapProvider::OpenStreetMap,
             zoom: 16,
             opacity: 1.0,
             is_enabled: true,
