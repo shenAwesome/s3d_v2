@@ -23,16 +23,25 @@ pub mod solar;
 pub mod spatial;
 
 // Convenient top-level re-exports
-pub use engine::{MapCommand, MapEngine, MapEvent, MapView};
+pub use engine::{
+    GoToOptions, GoToTarget, IntoGoToOptions, MapCommand, MapEngine, MapEvent, MapView,
+};
 #[cfg(feature = "egui")]
 pub use engine::{MapResponse, MapWidget};
 
 pub use gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
-pub use gis::layer::{Layer, LayerType, SimpleFeatureLayer};
+pub use gis::layer::{
+    ElevationFormat, ElevationLayer, ElevationMode, FeatureLayer, GraphicsLayer,
+    GroupLayer, IntegratedMeshLayer, Layer, LayerTrait, LayerType, LoadStatus,
+    SceneLayer, SimpleFeatureLayer, TileLayer,
+};
+pub use gis::map::{Basemap, Ground, LayerCollection, Map, MapBuilder, Table, TableCollection, ViewingMode};
+pub use gis::graphic::Graphic;
+pub use gis::renderer::Renderer;
 pub use gis::basemap::{BasemapManager, BasemapProvider};
 pub use gis::terrain::TerrainManager;
 pub use gis::geojson_loader::GisFeature;
-pub use renderer::camera::{Camera, CameraTarget, GoToOptions, GoToTarget, IntoGoToOptions};
+pub use renderer::camera::{Camera, CameraTarget};
 pub use solar::datetime_state::SolarDateTimeState;
 pub use solar::sun_calc::{calculate_solar_position, SolarPosition};
 pub use spatial::picking::{screen_to_ray, Ray};

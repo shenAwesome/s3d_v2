@@ -8,6 +8,7 @@ use crate::renderer::camera::Camera;
 use glam::{DMat4, DVec3, Vec2, Vec3};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Mutex;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
@@ -136,7 +137,7 @@ pub struct Tiles3DManager {
     tx_req: Sender<TileRequest>,
     #[allow(dead_code)]
     tx_resp: Sender<TileResponse>,
-    rx_resp: Receiver<TileResponse>,
+    rx_resp: Mutex<Receiver<TileResponse>>,
 
     pub status_message: String,
     pub is_loading: bool,
@@ -237,7 +238,7 @@ impl Tiles3DManager {
             current_origin: None,
             tx_req,
             tx_resp,
-            rx_resp,
+            rx_resp: Mutex::new(rx_resp),
             status_message: "Ready".to_string(),
             is_loading: false,
         }
@@ -733,29 +734,31 @@ impl Tiles3DManager {
         }
 
         // 1. Drain responses from background worker
-        while let Ok(resp) = self.rx_resp.try_recv() {
-            match resp {
-                TileResponse::TilesetLoaded { tileset } => {
-                    self.is_loading = false;
-                    match tileset {
-                        Ok(ts) => {
-                            self.status_message = format!("Tileset active (v{})", ts.asset.version);
-                            self.tileset = Some(ts);
-                        }
-                        Err(e) => {
-                            self.status_message = format!("Tileset load error: {}", e);
+        if let Ok(rx) = self.rx_resp.lock() {
+            while let Ok(resp) = rx.try_recv() {
+                match resp {
+                    TileResponse::TilesetLoaded { tileset } => {
+                        self.is_loading = false;
+                        match tileset {
+                            Ok(ts) => {
+                                self.status_message = format!("Tileset active (v{})", ts.asset.version);
+                                self.tileset = Some(ts);
+                            }
+                            Err(e) => {
+                                self.status_message = format!("Tileset load error: {}", e);
+                            }
                         }
                     }
-                }
-                TileResponse::ContentLoaded { id, result } => {
-                    self.pending_requests.remove(&id);
-                    match result {
-                        Ok(mesh) => {
-                            newly_loaded.push(mesh.clone());
-                            self.loaded_tiles.insert(id, mesh);
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to decode 3D tile {}: {}", id, e);
+                    TileResponse::ContentLoaded { id, result } => {
+                        self.pending_requests.remove(&id);
+                        match result {
+                            Ok(mesh) => {
+                                newly_loaded.push(mesh.clone());
+                                self.loaded_tiles.insert(id, mesh);
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to decode 3D tile {}: {}", id, e);
+                            }
                         }
                     }
                 }

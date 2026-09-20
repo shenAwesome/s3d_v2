@@ -1,7 +1,7 @@
 use crate::gis::basemap::BasemapManager;
 use crate::gis::cache::ResourceBudget;
 use crate::gis::crs::ProjectOrigin;
-use crate::gis::layer::{Layer, LayerRegistry};
+use crate::gis::layer::LayerRegistry;
 use crate::gis::source::SourceRegistry;
 use crate::gis::terrain::TerrainManager;
 use crate::renderer::camera::Camera;
@@ -16,13 +16,12 @@ use crate::solar::sun_calc::SolarPosition;
 pub struct MapView<'a> {
     pub origin: &'a ProjectOrigin,
     pub camera: &'a Camera,
-    pub layers: &'a [Layer],
+    pub layers: &'a [Box<dyn crate::gis::layer::Layer>],
     pub layer_registry: &'a LayerRegistry,
     pub sources: &'a SourceRegistry,
     pub budget: &'a ResourceBudget,
     pub basemap: &'a BasemapManager,
     pub terrain: &'a TerrainManager,
-    pub i3s: &'a crate::gis::i3s::manager::I3SManager,
     pub solar_pos: &'a SolarPosition,
     pub solar_dt: &'a SolarDateTimeState,
     pub sunlight_enabled: bool,
@@ -34,13 +33,13 @@ pub struct MapView<'a> {
 
 impl<'a> MapView<'a> {
     /// Find a layer by its unique string identifier
-    pub fn find_layer(&self, id: &str) -> Option<&'a Layer> {
-        self.layers.iter().find(|l| l.id == id)
+    pub fn find_layer(&self, id: &str) -> Option<&(dyn crate::gis::layer::Layer + 'static)> {
+        self.layers.iter().find(|l| l.id() == id).map(|l| &**l)
     }
 
     /// Returns the number of currently visible layers
     pub fn visible_layers_count(&self) -> usize {
-        self.layers.iter().filter(|l| l.visible).count()
+        self.layers.iter().filter(|l| l.visible()).count()
     }
 
     /// Aggregates all attributions from active sources and basemaps

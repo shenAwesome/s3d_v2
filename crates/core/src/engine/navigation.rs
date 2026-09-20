@@ -241,8 +241,9 @@ impl NavigationController {
             let factor = 0.74f32.powf(steps);
             let new_alt = (cur_alt * factor).clamp(10.0, 80_000_000.0);
 
-            // Automatic Zoom Landing: Transition from Globe to Planar when zooming in <= 50km
-            if new_alt <= 50_000.0 && scroll_delta > 0.0 {
+            // Automatic Zoom Landing: Transition from Globe to Planar when zooming in <= threshold altitude (MSL)
+            let auto_switch_threshold = engine.auto_switch_altitude.unwrap_or(0.0) as f32;
+            if auto_switch_threshold > 0.0 && new_alt <= auto_switch_threshold && scroll_delta > 0.0 {
                 let landing_geo = if let Some(hover_pos) = ctx.input(|i| i.pointer.hover_pos()) {
                     let local_screen = hover_pos - rect.min;
                     if local_screen.x >= 0.0 && local_screen.x <= vp_size.x && local_screen.y >= 0.0 && local_screen.y <= vp_size.y {
@@ -262,7 +263,14 @@ impl NavigationController {
                     ecef_to_geodetic(eye.normalize_or_zero() * WGS84_RADIUS)
                 };
 
-                engine.transition_to_planar_at_geo(landing_geo.latitude, landing_geo.longitude, new_alt);
+                // Auto-switching to planar lands with Heading 0.0° (North) and Tilt 45.0° (oblique 3D perspective)
+                engine.transition_to_planar_at_geo_with_pose(
+                    landing_geo.latitude,
+                    landing_geo.longitude,
+                    new_alt,
+                    0.0,
+                    45.0,
+                );
             } else {
                 engine.camera.zoom_globe(scroll_delta);
             }
@@ -333,19 +341,22 @@ impl NavigationController {
                     engine.camera.target_yaw = engine.camera.yaw;
                 }
 
-                // Auto-transition to 3D Globe when zooming out past 50km
-                if engine.camera.target_distance > 50_000.0 && scroll_delta < 0.0 {
+                // Auto-transition to 3D Globe when zooming out past threshold (+10% hysteresis deadband)
+                let auto_switch_threshold = engine.auto_switch_altitude.unwrap_or(0.0) as f32;
+                if auto_switch_threshold > 0.0 && engine.camera.target_distance > auto_switch_threshold * 1.1 && scroll_delta < 0.0 {
                     engine.transition_to_globe();
                 }
             } else {
                 engine.camera.zoom_planar(scroll_delta);
-                if engine.camera.target_distance > 50_000.0 && scroll_delta < 0.0 {
+                let auto_switch_threshold = engine.auto_switch_altitude.unwrap_or(0.0) as f32;
+                if auto_switch_threshold > 0.0 && engine.camera.target_distance > auto_switch_threshold * 1.1 && scroll_delta < 0.0 {
                     engine.transition_to_globe();
                 }
             }
         } else {
             engine.camera.zoom_planar(scroll_delta);
-            if engine.camera.target_distance > 50_000.0 && scroll_delta < 0.0 {
+            let auto_switch_threshold = engine.auto_switch_altitude.unwrap_or(0.0) as f32;
+            if auto_switch_threshold > 0.0 && engine.camera.target_distance > auto_switch_threshold * 1.1 && scroll_delta < 0.0 {
                 engine.transition_to_globe();
             }
         }

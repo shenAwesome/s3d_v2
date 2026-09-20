@@ -4,7 +4,7 @@
 //! Modeled directly after OpenLayers Examples (https://openlayers.org/en/latest/examples/):
 //! - Zero extraneous UI dashboards, telemetry panels, or fake toolbars.
 //! - Pure Map Viewport (`MapWidget`).
-//! - Dedicated Code Section showing the 100% matching, runnable Rust code for that feature.
+//! - Dedicated Code Section showing the **actual source file** for each demo.
 //!
 //! Run native desktop:
 //! `cargo run --example showcase`
@@ -12,218 +12,29 @@
 //! Run browser (WASM):
 //! `demo.bat`
 
+#[path = "demos/mod.rs"]
+mod demos;
+
+use demos::{DemoEntry, demo_index_by_id};
 use eframe::egui;
 use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapWidget;
-use s3d_core::gis::basemap::BasemapProvider;
-use s3d_core::gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
+use s3d_core::engine::GoToOptions;
+use s3d_core::gis::crs::{GeoCoord, ProjectOrigin};
 use s3d_core::renderer::render_engine::RenderEngine;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoreExample {
-    SimpleMap,
-    BasemapSwitcher,
-    GlobeProjection,
-    GeoJsonBuildings,
-    SunAndShadows,
-    TerrainElevation,
-    CameraFlyTo,
-    CoordinatePicking,
-}
-
-impl CoreExample {
-    pub fn all() -> &'static [CoreExample] {
-        &[
-            CoreExample::SimpleMap,
-            CoreExample::BasemapSwitcher,
-            CoreExample::GlobeProjection,
-            CoreExample::GeoJsonBuildings,
-            CoreExample::SunAndShadows,
-            CoreExample::TerrainElevation,
-            CoreExample::CameraFlyTo,
-            CoreExample::CoordinatePicking,
-        ]
-    }
-
-    pub fn id(&self) -> &'static str {
-        match self {
-            CoreExample::SimpleMap => "simple_map",
-            CoreExample::BasemapSwitcher => "basemap_switcher",
-            CoreExample::GlobeProjection => "globe_projection",
-            CoreExample::GeoJsonBuildings => "geojson_buildings",
-            CoreExample::SunAndShadows => "sun_and_shadows",
-            CoreExample::TerrainElevation => "terrain_elevation",
-            CoreExample::CameraFlyTo => "camera_navigation",
-            CoreExample::CoordinatePicking => "coordinate_picking",
-        }
-    }
-
-    pub fn from_id(s: &str) -> Option<CoreExample> {
-        let s = s.trim().to_ascii_lowercase().replace('-', "_");
-        match s.as_str() {
-            "simple_map" | "simple" | "quickstart" => Some(CoreExample::SimpleMap),
-            "basemap_switcher" | "basemap" | "basemaps" => Some(CoreExample::BasemapSwitcher),
-            "globe_projection" | "globe" | "projection" => Some(CoreExample::GlobeProjection),
-            "geojson_buildings" | "buildings" | "geojson" => Some(CoreExample::GeoJsonBuildings),
-            "sun_and_shadows" | "sun" | "solar" | "shadows" => Some(CoreExample::SunAndShadows),
-            "terrain_elevation" | "terrain" | "elevation" | "dem" => Some(CoreExample::TerrainElevation),
-            "camera_navigation" | "camera" | "flyto" => Some(CoreExample::CameraFlyTo),
-            "coordinate_picking" | "picking" | "coordinates" => Some(CoreExample::CoordinatePicking),
-            _ => None,
-        }
-    }
-
-    pub fn title(&self) -> &'static str {
-        match self {
-            CoreExample::SimpleMap => "Simple Map (Quickstart)",
-            CoreExample::BasemapSwitcher => "Basemap Switcher",
-            CoreExample::GlobeProjection => "3D Globe Projection",
-            CoreExample::GeoJsonBuildings => "3D Buildings (GeoJSON Extrusion)",
-            CoreExample::SunAndShadows => "Solar Calculation & Shadows",
-            CoreExample::TerrainElevation => "3D Terrain Elevation (DEM)",
-            CoreExample::CameraFlyTo => "Camera Navigation & Angles",
-            CoreExample::CoordinatePicking => "Coordinate Picking & Raycast",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            CoreExample::SimpleMap => {
-                "Demonstrates the minimal setup to initialize MapEngine and stream OpenStreetMap tiles."
-            }
-            CoreExample::BasemapSwitcher => {
-                "Demonstrates switching between live raster tile providers (OpenStreetMap, Esri Satellite, Streets, Topo)."
-            }
-            CoreExample::GlobeProjection => {
-                "Demonstrates switching between flat planar (Local ENU) and whole-Earth 3D Globe (ECEF) projections."
-            }
-            CoreExample::GeoJsonBuildings => {
-                "Demonstrates parsing GeoJSON building footprints, 2.5D triangulation, and 3D height extrusion."
-            }
-            CoreExample::SunAndShadows => {
-                "Demonstrates real-time astronomical solar calculation and directional shadow casting."
-            }
-            CoreExample::TerrainElevation => {
-                "Demonstrates streaming 3D digital elevation model (DEM) terrain with height exaggeration."
-            }
-            CoreExample::CameraFlyTo => {
-                "Demonstrates positioning and aiming the 3D GIS camera using target, distance, pitch, and yaw."
-            }
-            CoreExample::CoordinatePicking => {
-                "Demonstrates raycasting screen cursor position to geographic WGS84 coordinates on click."
-            }
-        }
-    }
-
-    pub fn code_snippet(&self) -> &'static str {
-        match self {
-            CoreExample::SimpleMap => {
-r#"use s3d_core::engine::map_engine::MapEngine;
-use s3d_core::engine::widget::MapWidget;
-use s3d_core::gis::crs::{GeoCoord, ProjectOrigin};
-
-// 1. Initialize MapEngine centered on Melbourne CBD
-let origin = ProjectOrigin::from_geo(GeoCoord::new(-37.8136, 144.9631, 0.0));
-let mut map = MapEngine::new(origin);
-
-// 2. OpenStreetMap standard tiles are enabled by default
-map.basemap.is_enabled = true;
-
-// 3. Render map viewport inside egui UI
-MapWidget::new(&mut map).show(ui);"#
-            }
-            CoreExample::BasemapSwitcher => {
-r#"use s3d_core::gis::basemap::BasemapProvider;
-
-// Switch basemap provider (OpenStreetMap, EsriImagery, EsriStreet, EsriTopo)
-map.basemap.provider = BasemapProvider::EsriImagery;
-map.basemap.reset_cache();
-
-if let Some(renderer) = &mut map.renderer {
-    renderer.clear_basemap_tiles();
-}"#
-            }
-            CoreExample::GlobeProjection => {
-r#"// Transition to whole-Earth 3D Globe (ECEF)
-map.transition_to_globe();
-
-// Or transition down to local planar ENU at specific coordinates
-map.transition_to_planar_at_geo(-37.8136, 144.9631, 2000.0);"#
-            }
-            CoreExample::GeoJsonBuildings => {
-r#"// Ingest GeoJSON building footprints, triangulate 2.5D polygons, and extrude 3D meshes
-map.load_sample_buildings();
-
-// Or load custom GeoJSON text:
-// map.load_geojson(geojson_string, "Building Layer")?;"#
-            }
-            CoreExample::SunAndShadows => {
-r#"// 1. Set time of day (hour and minute)
-map.solar_dt.hour = 14;
-map.solar_dt.minute = 0;
-
-// 2. Recalculate astronomical solar position and update directional shadows
-map.update_solar_position();"#
-            }
-            CoreExample::TerrainElevation => {
-r#"use s3d_core::gis::crs::{GeoCoord, ProjectOrigin};
-
-// 1. Center map on Mount Fuji summit (elevation 3,776 m)
-let fuji = GeoCoord::new(35.3606, 138.7274, 3776.0);
-map.set_origin(ProjectOrigin::from_geo(fuji));
-
-// 2. Enable 3D digital elevation model (DEM) terrain streaming and set height exaggeration
-map.terrain.is_enabled = true;
-map.terrain.height_exaggeration = 1.5;"#
-            }
-            CoreExample::CameraFlyTo => {
-r#"// Position camera with target offset, distance (meters), pitch (tilt), and yaw (azimuth)
-map.look_at(
-    glam::Vec3::ZERO,
-    1800.0,
-    35.0f32.to_radians(),
-    (-30.0f32).to_radians(),
-);"#
-            }
-            CoreExample::CoordinatePicking => {
-r#"// 1. Raycast screen cursor position into 3D world space
-let ray = map.screen_to_ray(cursor_x, cursor_y, viewport_w, viewport_h);
-
-// 2. Test intersection with building colliders, 3D terrain DEM, or ground plane
-if let Some(hit_world) = map.intersect_scene_or_terrain(&ray) {
-    // 3. Convert local Cartesian coordinates to geographic WGS84
-    let geo = map.scene.origin.local_to_geo(hit_world);
-    println!("Picked Lat: {:.6}°, Lon: {:.6}°", geo.latitude, geo.longitude);
-}"#
-            }
-        }
-    }
-}
-
-pub struct ShowcaseApp {
-    map: MapEngine,
-    active_example: CoreExample,
-    code_buffer: String,
-    last_copied_at: Option<f64>,
-
-    // Minimal parameters matching the displayed code
-    selected_provider: BasemapProvider,
-    sim_hour: f32,
-    terrain_exaggeration: f32,
-    picked_geo: Option<GeoCoord>,
-    inspected_building: Option<String>,
-}
+// ============================================================================
+// URL / CLI Routing
+// ============================================================================
 
 #[cfg(target_arch = "wasm32")]
-pub fn get_example_from_url() -> Option<CoreExample> {
+fn get_example_id_from_url() -> Option<String> {
     let window = web_sys::window()?;
     let location = window.location();
     if let Ok(hash) = location.hash() {
         let clean = hash.trim_start_matches('#').trim();
         if !clean.is_empty() {
-            if let Some(ex) = CoreExample::from_id(clean) {
-                return Some(ex);
-            }
+            return Some(clean.to_ascii_lowercase().replace('-', "_"));
         }
     }
     if let Ok(search) = location.search() {
@@ -232,9 +43,7 @@ pub fn get_example_from_url() -> Option<CoreExample> {
             let mut kv = part.split('=');
             if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
                 if k == "example" || k == "ex" {
-                    if let Some(ex) = CoreExample::from_id(v) {
-                        return Some(ex);
-                    }
+                    return Some(v.to_ascii_lowercase().replace('-', "_"));
                 }
             }
         }
@@ -243,48 +52,55 @@ pub fn get_example_from_url() -> Option<CoreExample> {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn sync_url_with_example(example: CoreExample) {
+fn sync_url_hash(demos: &[DemoEntry], idx: usize) {
     if let Some(window) = web_sys::window() {
-        let location = window.location();
-        let target_hash = format!("#{}", example.id());
-        if let Ok(cur_hash) = location.hash() {
-            if cur_hash != target_hash {
-                let _ = location.set_hash(&target_hash);
+        let target = format!("#{}", demos[idx].demo.id());
+        if let Ok(cur) = window.location().hash() {
+            if cur != target {
+                let _ = window.location().set_hash(&target);
             }
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn get_initial_example() -> CoreExample {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
+fn get_initial_example_id() -> Option<String> {
+    for arg in std::env::args().skip(1) {
         let clean = arg.trim_start_matches("--example=").trim_start_matches("--");
-        if let Some(ex) = CoreExample::from_id(clean) {
-            return ex;
+        if !clean.is_empty() {
+            return Some(clean.to_ascii_lowercase().replace('-', "_"));
         }
     }
-    CoreExample::SimpleMap
+    None
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn get_initial_example() -> CoreExample {
-    get_example_from_url().unwrap_or(CoreExample::SimpleMap)
+// ============================================================================
+// Showcase Application
+// ============================================================================
+
+pub struct ShowcaseApp {
+    map: MapEngine,
+    demos: Vec<DemoEntry>,
+    active_idx: usize,
+    code_text: String,
+    last_copied_at: Option<f64>,
 }
 
 impl ShowcaseApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Force dark theme so all widgets (code editor, dropdowns, sliders) match the dark panel fills
         cc.egui_ctx.set_theme(egui::Theme::Dark);
 
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
         let mut map = MapEngine::new(ProjectOrigin::from_geo(melbourne));
 
-        // Initial camera
-        map.camera.pitch = 35.0f32.to_radians();
-        map.camera.yaw = (-25.0f32).to_radians();
-        map.camera.distance = 1800.0;
-        map.camera.snap_smoothing();
+        // Default camera
+        map.goto(
+            glam::Vec3::ZERO,
+            GoToOptions::immediate()
+                .with_distance(1800.0)
+                .with_heading(0.0)
+                .with_pitch(35.0),
+        );
 
         // Attach GPU renderer
         if let Some(render_state) = &cc.wgpu_render_state {
@@ -296,155 +112,55 @@ impl ShowcaseApp {
             map.set_renderer(renderer);
         }
 
-        let initial_example = get_initial_example();
+        let demos = demos::all_demos();
+
+        // Resolve initial example from CLI or URL
+        #[cfg(not(target_arch = "wasm32"))]
+        let initial_idx = get_initial_example_id()
+            .and_then(|id| demo_index_by_id(&demos, &id))
+            .unwrap_or(0);
+        #[cfg(target_arch = "wasm32")]
+        let initial_idx = get_example_id_from_url()
+            .and_then(|id| demo_index_by_id(&demos, &id))
+            .unwrap_or(0);
+
+        let code_text = demos[initial_idx].source.to_string();
+
         let mut app = Self {
             map,
-            active_example: initial_example,
-            code_buffer: initial_example.code_snippet().to_string(),
+            demos,
+            active_idx: initial_idx,
+            code_text,
             last_copied_at: None,
-            selected_provider: BasemapProvider::OpenStreetMap,
-            sim_hour: 14.0,
-            terrain_exaggeration: 1.5,
-            picked_geo: None,
-            inspected_building: None,
         };
 
-        app.apply_example_setup(initial_example);
+        app.demos[initial_idx].demo.setup(&mut app.map);
+
+        #[cfg(target_arch = "wasm32")]
+        sync_url_hash(&app.demos, app.active_idx);
+
         app
     }
 
-    fn apply_example_setup(&mut self, example: CoreExample) {
-        self.active_example = example;
-        self.code_buffer = example.code_snippet().to_string();
-        self.picked_geo = None;
-        self.inspected_building = None;
+    fn switch_to(&mut self, idx: usize) {
+        if idx == self.active_idx { return; }
+        self.active_idx = idx;
+        self.code_text = self.demos[idx].source.to_string();
+
+        // Reset map state before activating new demo
+        self.map.clear_layers();
+        self.map.terrain.is_enabled = false;
+        self.map.selected_feature = None;
+        if let Some(r) = &mut self.map.renderer {
+            r.set_selected_mesh(None);
+            r.edge_renderer.config.enabled = false;
+        }
+        self.map.align_north();
+
+        self.demos[idx].demo.setup(&mut self.map);
 
         #[cfg(target_arch = "wasm32")]
-        sync_url_with_example(example);
-
-        match example {
-            CoreExample::SimpleMap => {
-                let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-                self.map.set_origin(ProjectOrigin::from_geo(melbourne));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = BasemapProvider::OpenStreetMap;
-                self.map.terrain.is_enabled = false;
-                self.map.layers.clear();
-                self.map.reload_all_gpu_meshes();
-                self.map.camera.distance = 2500.0;
-                self.map.camera.pitch = 30.0f32.to_radians();
-                self.map.camera.yaw = 0.0;
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-                self.map.basemap.reset_cache();
-                if let Some(r) = &mut self.map.renderer {
-                    r.clear_basemap_tiles();
-                }
-            }
-            CoreExample::BasemapSwitcher => {
-                let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-                self.map.set_origin(ProjectOrigin::from_geo(melbourne));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = self.selected_provider;
-                self.map.terrain.is_enabled = false;
-                self.map.layers.clear();
-                self.map.reload_all_gpu_meshes();
-                self.map.camera.distance = 2000.0;
-                self.map.camera.pitch = 35.0f32.to_radians();
-                self.map.camera.yaw = (-25.0f32).to_radians();
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-                self.map.basemap.reset_cache();
-                if let Some(r) = &mut self.map.renderer {
-                    r.clear_basemap_tiles();
-                }
-            }
-            CoreExample::GlobeProjection => {
-                self.map.transition_to_globe();
-            }
-            CoreExample::GeoJsonBuildings => {
-                let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-                self.map.set_origin(ProjectOrigin::from_geo(melbourne));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = BasemapProvider::OpenStreetMap;
-                self.map.terrain.is_enabled = false;
-                self.map.load_sample_buildings();
-                self.map.camera.distance = 1800.0;
-                self.map.camera.pitch = 40.0f32.to_radians();
-                self.map.camera.yaw = (-30.0f32).to_radians();
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-            }
-            CoreExample::SunAndShadows => {
-                let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-                self.map.set_origin(ProjectOrigin::from_geo(melbourne));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = BasemapProvider::OpenStreetMap;
-                self.map.terrain.is_enabled = false;
-                self.map.load_sample_buildings();
-                self.map.solar_dt.hour = self.sim_hour.round() as u32;
-                self.map.solar_dt.minute = 0;
-                self.map.update_solar_position();
-                self.map.camera.distance = 1600.0;
-                self.map.camera.pitch = 45.0f32.to_radians();
-                self.map.camera.yaw = (-40.0f32).to_radians();
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-            }
-            CoreExample::TerrainElevation => {
-                let fuji = GeoCoord::new(35.3606, 138.7274, 3776.0);
-                self.map.set_origin(ProjectOrigin::from_geo(fuji));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = BasemapProvider::EsriImagery;
-                self.map.terrain.is_enabled = true;
-                self.map.terrain.height_exaggeration = self.terrain_exaggeration;
-                self.map.layers.clear();
-                self.map.reload_all_gpu_meshes();
-                self.map.camera.distance = 18000.0;
-                self.map.camera.pitch = 28.0f32.to_radians();
-                self.map.camera.yaw = (-45.0f32).to_radians();
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-                self.map.basemap.reset_cache();
-                if let Some(r) = &mut self.map.renderer {
-                    r.clear_basemap_tiles();
-                }
-            }
-            CoreExample::CameraFlyTo => {
-                let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-                self.map.set_origin(ProjectOrigin::from_geo(melbourne));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = BasemapProvider::OpenStreetMap;
-                self.map.terrain.is_enabled = false;
-                self.map.load_sample_buildings();
-                self.map.camera.distance = 2200.0;
-                self.map.camera.pitch = 30.0f32.to_radians();
-                self.map.camera.yaw = 0.0;
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-            }
-            CoreExample::CoordinatePicking => {
-                let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-                self.map.set_origin(ProjectOrigin::from_geo(melbourne));
-                self.map.projection_mode = ProjectionMode::PlanarENU;
-                self.map.basemap.is_enabled = true;
-                self.map.basemap.provider = BasemapProvider::OpenStreetMap;
-                self.map.terrain.is_enabled = false;
-                self.map.layers.clear();
-                self.map.reload_all_gpu_meshes();
-                self.map.camera.distance = 2500.0;
-                self.map.camera.pitch = 45.0f32.to_radians();
-                self.map.camera.yaw = 0.0;
-                self.map.camera.target = glam::Vec3::ZERO;
-                self.map.camera.snap_smoothing();
-            }
-        }
+        sync_url_hash(&self.demos, idx);
     }
 }
 
@@ -453,15 +169,19 @@ impl eframe::App for ShowcaseApp {
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.map.update(dt);
 
+        // WASM: sync example from URL hash changes
         #[cfg(target_arch = "wasm32")]
         {
-            if let Some(url_ex) = get_example_from_url() {
-                if url_ex != self.active_example {
-                    self.apply_example_setup(url_ex);
+            if let Some(url_id) = get_example_id_from_url() {
+                if let Some(idx) = demo_index_by_id(&self.demos, &url_id) {
+                    if idx != self.active_idx {
+                        self.switch_to(idx);
+                    }
                 }
             }
         }
 
+        // Request repaint when streaming or animating
         if self.map.camera.is_animating()
             || self.map.has_new_gpu_tiles
             || self.map.basemap.has_unconsumed_completed()
@@ -470,96 +190,42 @@ impl eframe::App for ShowcaseApp {
             ctx.request_repaint();
         }
 
-        // --- Top Bar: Minimal Example Selector & View Mode ---
+        // --- Top Bar: Example Selector + Demo Controls ---
         egui::TopBottomPanel::top("example_top_bar")
             .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(22, 24, 30)).inner_margin(8.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(egui::RichText::new("🗺 S3D Core").strong().color(egui::Color32::from_rgb(96, 165, 250)));
+                    ui.heading(
+                        egui::RichText::new("🗺 S3D Core")
+                            .strong()
+                            .color(egui::Color32::from_rgb(96, 165, 250)),
+                    );
                     ui.separator();
 
-                    // Example Selector Dropdown
+                    // Example selector dropdown
+                    let current_title = self.demos[self.active_idx].demo.title();
                     egui::ComboBox::from_id_salt("core_example_selector")
-                        .selected_text(self.active_example.title())
+                        .selected_text(current_title)
                         .width(250.0)
                         .show_ui(ui, |ui| {
-                            for &ex in CoreExample::all() {
-                                if ui.selectable_label(self.active_example == ex, ex.title()).clicked() {
-                                    self.apply_example_setup(ex);
+                            for i in 0..self.demos.len() {
+                                let title = self.demos[i].demo.title();
+                                if ui.selectable_label(i == self.active_idx, title).clicked() {
+                                    self.switch_to(i);
                                 }
                             }
                         });
 
                     ui.separator();
 
-                    // --- Feature-Specific Minimal Controls (Directly Derived from Code) ---
-                    match self.active_example {
-                        CoreExample::BasemapSwitcher => {
-                            let prev_provider = self.selected_provider;
-                            for &prov in BasemapProvider::all() {
-                                ui.selectable_value(&mut self.selected_provider, prov, prov.display_name());
-                            }
-                            if self.selected_provider != prev_provider {
-                                self.map.basemap.provider = self.selected_provider;
-                                self.map.basemap.reset_cache();
-                                if let Some(r) = &mut self.map.renderer {
-                                    r.clear_basemap_tiles();
-                                }
-                            }
-                        }
-                        CoreExample::GlobeProjection => {
-                            let is_globe = self.map.projection_mode == ProjectionMode::GlobeECEF;
-                            if ui.selectable_label(!is_globe, "🗺 Planar (ENU)").clicked() && is_globe {
-                                self.map.transition_to_planar_at_geo(-37.8136, 144.9631, 2000.0);
-                            }
-                            if ui.selectable_label(is_globe, "🌐 Globe (ECEF)").clicked() && !is_globe {
-                                self.map.transition_to_globe();
-                            }
-                        }
-                        CoreExample::SunAndShadows => {
-                            ui.label("Sun Hour:");
-                            if ui.add(egui::Slider::new(&mut self.sim_hour, 6.0..=18.0).suffix("h").step_by(1.0)).changed() {
-                                self.map.solar_dt.hour = self.sim_hour.round() as u32;
-                                self.map.update_solar_position();
-                            }
-                        }
-                        CoreExample::TerrainElevation => {
-                            ui.label("Exaggeration:");
-                            if ui.add(egui::Slider::new(&mut self.terrain_exaggeration, 0.5..=3.0).step_by(0.1)).changed() {
-                                self.map.terrain.height_exaggeration = self.terrain_exaggeration;
-                            }
-                        }
-                        CoreExample::CameraFlyTo => {
-                            if ui.button("Melbourne").clicked() {
-                                self.map.look_at(glam::Vec3::ZERO, 1800.0, 35.0f32.to_radians(), (-30.0f32).to_radians());
-                            }
-                            if ui.button("Nadir Top-Down").clicked() {
-                                self.map.look_at(glam::Vec3::ZERO, 2500.0, 89.9f32.to_radians(), 0.0);
-                            }
-                            if ui.button("Isometric 45°").clicked() {
-                                self.map.look_at(glam::Vec3::ZERO, 2200.0, 35.26f32.to_radians(), 45.0f32.to_radians());
-                            }
-                        }
-                        CoreExample::CoordinatePicking => {
-                            if let Some(geo) = self.picked_geo {
-                                ui.label(egui::RichText::new(format!("Picked: Lat {:.5}°, Lon {:.5}°", geo.latitude, geo.longitude)).strong().color(egui::Color32::from_rgb(52, 211, 153)));
-                            } else {
-                                ui.label(egui::RichText::new("Click map to pick coordinates").italics().color(egui::Color32::GRAY));
-                            }
-                        }
-                        CoreExample::GeoJsonBuildings => {
-                            if let Some(name) = &self.inspected_building {
-                                ui.label(egui::RichText::new(format!("Selected: {}", name)).strong().color(egui::Color32::from_rgb(251, 191, 36)));
-                            } else {
-                                ui.label(egui::RichText::new("Click any building to select").italics().color(egui::Color32::GRAY));
-                            }
-                        }
-                        _ => {}
+                    // Delegate demo-specific controls to the active demo
+                    if self.demos[self.active_idx].demo.controls(ui, &mut self.map) {
+                        ctx.request_repaint();
                     }
                 });
             });
 
-        // --- Right Side Panel: Code Section (Selectable & Copyable, OpenLayers Style) ---
+        // --- Right Panel: Source Code (actual file via include_str!) ---
         let initial_panel_width = (ctx.screen_rect().width() * 0.45).clamp(340.0, 680.0);
         egui::SidePanel::right("code_side_panel")
             .resizable(true)
@@ -569,7 +235,11 @@ impl eframe::App for ShowcaseApp {
             .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(15, 17, 23)).inner_margin(12.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(self.active_example.title()).strong().color(egui::Color32::WHITE));
+                    ui.label(
+                        egui::RichText::new(self.demos[self.active_idx].demo.title())
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let current_time = ctx.input(|i| i.time);
                         let is_recently_copied = self
@@ -577,26 +247,37 @@ impl eframe::App for ShowcaseApp {
                             .map_or(false, |t| current_time - t < 2.0);
 
                         if is_recently_copied {
-                            ui.label(egui::RichText::new("✓ Copied!").color(egui::Color32::from_rgb(52, 211, 153)));
+                            ui.label(
+                                egui::RichText::new("✓ Copied!")
+                                    .color(egui::Color32::from_rgb(52, 211, 153)),
+                            );
                         } else if ui.button("📋 Copy All").clicked() {
-                            ctx.copy_text(self.code_buffer.clone());
+                            ctx.copy_text(self.code_text.clone());
                             self.last_copied_at = Some(current_time);
                         }
 
-                        ui.label(egui::RichText::new("Rust (s3d-core)").monospace().color(egui::Color32::from_rgb(147, 197, 253)));
+                        ui.label(
+                            egui::RichText::new("Rust (s3d-core)")
+                                .monospace()
+                                .color(egui::Color32::from_rgb(147, 197, 253)),
+                        );
                     });
                 });
 
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(self.active_example.description()).small().color(egui::Color32::GRAY));
+                ui.label(
+                    egui::RichText::new(self.demos[self.active_idx].demo.description())
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
                 ui.separator();
 
-                // Selectable & Copyable Code Container
+                // Display the actual source file — what you see IS what runs
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.add(
-                            egui::TextEdit::multiline(&mut self.code_buffer)
+                            egui::TextEdit::multiline(&mut self.code_text)
                                 .font(egui::TextStyle::Monospace)
                                 .text_color(egui::Color32::from_rgb(226, 232, 240))
                                 .desired_width(f32::INFINITY)
@@ -605,45 +286,15 @@ impl eframe::App for ShowcaseApp {
                     });
             });
 
-        // --- Left Area: Central 3D Map Viewport ---
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(10, 12, 16)))
-                .show(ctx, |ui| {
-                    let response = MapWidget::new(&mut self.map).show(ui);
+        // --- Central Panel: 3D Map Viewport ---
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(10, 12, 16)))
+            .show(ctx, |ui| {
+                let response = MapWidget::new(&mut self.map).show(ui);
 
-                    // Coordinate Picking Click Handler
-                    if self.active_example == CoreExample::CoordinatePicking {
-                        if let Some(world_pt) = response.clicked_world_point {
-                            self.picked_geo = if self.map.projection_mode == ProjectionMode::GlobeECEF {
-                                Some(s3d_core::gis::crs::ecef_to_geodetic(world_pt))
-                            } else {
-                                Some(self.map.scene.origin.local_to_geo(world_pt))
-                            };
-                        }
-                    }
-
-                    // GeoJSON Building Click Selection Handler
-                    if self.active_example == CoreExample::GeoJsonBuildings {
-                        if response.response.clicked() {
-                            if let Some(mouse_pos) = response.response.interact_pointer_pos() {
-                                let rect = response.response.rect;
-                                let ray = self.map.screen_to_ray(
-                                    mouse_pos.x - rect.min.x,
-                                    mouse_pos.y - rect.min.y,
-                                    rect.width(),
-                                    rect.height(),
-                                );
-                                if let Some((feat, _)) = self.map.pick_feature(&ray) {
-                                    self.inspected_building = Some(feat.name.clone());
-                                    self.map.select_feature(Some(feat));
-                                } else {
-                                    self.inspected_building = None;
-                                    self.map.select_feature(None);
-                                }
-                            }
-                        }
-                    }
-                });
+                // Delegate click/pick handling to the active demo
+                self.demos[self.active_idx].demo.on_map_response(&response, &mut self.map);
+            });
     }
 }
 

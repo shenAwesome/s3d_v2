@@ -1,8 +1,8 @@
 use glam::Vec3;
 use crate::gis::basemap::BasemapProvider;
 use crate::gis::crs::GeoCoord;
-use crate::gis::layer::{Layer, LayerDescriptor};
-use crate::renderer::camera::{GoToOptions, GoToTarget};
+use crate::gis::layer::{FeatureLayer, LayerDescriptor};
+use crate::engine::map_engine::{GoToOptions, GoToTarget};
 use crate::solar::datetime_state::SolarDateTimeState;
 
 /// Sub-commands for camera manipulation
@@ -30,7 +30,7 @@ pub enum LayerCommand {
     SetColorTint { id: String, tint: [f32; 4] },
     SetShadow { id: String, cast_shadows: bool },
     Remove(String),
-    Add(Box<Layer>),
+    Add(Box<FeatureLayer>),
     AddDescriptor(LayerDescriptor),
 }
 
@@ -47,15 +47,6 @@ pub enum BasemapCommand {
 pub enum TerrainCommand {
     SetEnabled(bool),
     SetHeightExaggeration(f32),
-}
-
-/// Sub-commands for Esri I3S 3D Object SceneLayer streaming
-#[derive(Debug, Clone, PartialEq)]
-pub enum I3SCommand {
-    SetEnabled(bool),
-    SetServiceUrl(String),
-    SetOpacity(f32),
-    SetLodThresholdScale(f32),
 }
 
 /// Sub-commands for scene clock & solar time
@@ -91,7 +82,6 @@ pub enum MapCommand {
     Layer(LayerCommand),
     Basemap(BasemapCommand),
     Terrain(TerrainCommand),
-    I3S(I3SCommand),
     Clock(ClockCommand),
     Environment(EnvironmentCommand),
     Edge(EdgeCommand),

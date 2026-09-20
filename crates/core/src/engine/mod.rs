@@ -8,10 +8,10 @@ pub mod widget;
 
 pub use command::{
     BasemapCommand, CameraCommand, ClockCommand, CommandError, EdgeCommand, EnvironmentCommand,
-    I3SCommand, LayerCommand, MapCommand, TerrainCommand,
+    LayerCommand, MapCommand, TerrainCommand,
 };
 pub use event::MapEvent;
-pub use map_engine::MapEngine;
+pub use map_engine::{GoToOptions, GoToTarget, IntoGoToOptions, MapEngine};
 pub use navigation::{NavigationController, OrbitState, PanState, ZoomAnchor};
 pub use view::MapView;
 

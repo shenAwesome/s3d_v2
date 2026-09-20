@@ -9,6 +9,7 @@ pub mod geometry;
 pub mod graphic;
 pub mod i3s;
 pub mod layer;
+pub mod map;
 pub mod platform;
 pub mod rasterizer;
 pub mod renderer;
@@ -25,7 +26,7 @@ pub use feature::{
     PointSymbol3D, PolygonGeometry,
 };
 
-// New API re-exports
+// Esri-aligned Geometry and Graphics
 pub use geometry::{
     Extent,
     Mesh,
@@ -42,12 +43,18 @@ pub use symbol::{
     PathSymbol3DLayer, PolygonSymbolLayer, Symbol3D, SymbolMaterial,
 };
 
+// Esri-aligned Layers
 pub use layer::{
-    Layer, LayerDescriptor, LayerFactory, LayerRegistry, LayerStatus, LayerTrait,
-    SimpleFeatureLayer,
+    ElevationFormat, ElevationLayer, ElevationMode, FeatureLayer, GraphicsLayer,
+    GroupLayer, IntegratedMeshLayer, Layer, LayerColorMode, LayerDescriptor,
+    LayerFactory, LayerRegistry, LayerSource, LayerStatus, LayerTrait, LayerType,
+    LoadStatus, SceneLayer, SimpleFeatureLayer, TileLayer, DEFAULT_SHADOW_COLOR,
 };
+
+// Esri-aligned Map Document Model
+pub use map::{Basemap, Ground, LayerCollection, Map, MapBuilder, Table, TableCollection, ViewingMode};
+
 pub use source::{
     RequestHandle, Source, SourceCaps, SourceId, SourceKind, SourceRegistry, TileKey, TileScheme,
     TileSource, XyzRasterSource,
 };
-

@@ -1,5 +1,5 @@
 use glam::{Mat4, Vec3};
-use crate::gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
+use crate::gis::crs::{GeoCoord, ProjectOrigin};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {
@@ -20,7 +20,7 @@ impl Default for Camera {
     fn default() -> Self {
         Self {
             target: Vec3::ZERO,
-            yaw: -std::f32::consts::FRAC_PI_4, // -45 deg looking South-East
+            yaw: 0.0, // 0.0 deg looking North
             pitch: std::f32::consts::FRAC_PI_6, // 30 deg above ground
             distance: 250.0,
             fov_y: 45.0f32.to_radians(),
@@ -28,7 +28,7 @@ impl Default for Camera {
             z_far: 10000.0,
             target_distance: 250.0,
             target_lookat: Vec3::ZERO,
-            target_yaw: -std::f32::consts::FRAC_PI_4,
+            target_yaw: 0.0,
             target_pitch: std::f32::consts::FRAC_PI_6,
         }
     }
@@ -61,237 +61,6 @@ impl Default for CameraTarget {
     }
 }
 
-/// Target destination for camera navigation (`map.goto`).
-///
-/// Accepts `[longitude, latitude]` arrays or tuples matching GIS standards
-/// (GeoJSON RFC 7946, Esri `view.goTo([lon, lat])`), explicit `GeoCoord`,
-/// or local `Vec3` for Planar CAD models.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum GoToTarget {
-    /// Geographic coordinate: `longitude` and `latitude` in decimal degrees.
-    Geo { longitude: f64, latitude: f64 },
-    /// Local 3D Cartesian coordinates in meters (Planar ENU mode only).
-    Local(Vec3),
-}
-
-impl GoToTarget {
-    /// Creates a geographic target from longitude and latitude in degrees.
-    #[inline]
-    pub fn lon_lat(longitude: f64, latitude: f64) -> Self {
-        Self::Geo { longitude, latitude }
-    }
-
-    /// Creates a geographic target from latitude and longitude in degrees.
-    #[inline]
-    pub fn lat_lon(latitude: f64, longitude: f64) -> Self {
-        Self::Geo { longitude, latitude }
-    }
-
-    /// Creates a geographic target from a `GeoCoord`.
-    #[inline]
-    pub fn from_geo(geo: GeoCoord) -> Self {
-        Self::Geo {
-            longitude: geo.longitude,
-            latitude: geo.latitude,
-        }
-    }
-
-    /// Creates a local 3D target point for Planar mode.
-    #[inline]
-    pub fn local(point: Vec3) -> Self {
-        Self::Local(point)
-    }
-}
-
-impl From<[f64; 2]> for GoToTarget {
-    /// Converts `[longitude, latitude]` array into a `GoToTarget`.
-    #[inline]
-    fn from([longitude, latitude]: [f64; 2]) -> Self {
-        Self::Geo { longitude, latitude }
-    }
-}
-
-impl From<(f64, f64)> for GoToTarget {
-    /// Converts `(longitude, latitude)` tuple into a `GoToTarget`.
-    #[inline]
-    fn from((longitude, latitude): (f64, f64)) -> Self {
-        Self::Geo { longitude, latitude }
-    }
-}
-
-impl From<GeoCoord> for GoToTarget {
-    #[inline]
-    fn from(geo: GeoCoord) -> Self {
-        Self::Geo {
-            longitude: geo.longitude,
-            latitude: geo.latitude,
-        }
-    }
-}
-
-impl From<&GeoCoord> for GoToTarget {
-    #[inline]
-    fn from(geo: &GeoCoord) -> Self {
-        Self::Geo {
-            longitude: geo.longitude,
-            latitude: geo.latitude,
-        }
-    }
-}
-
-impl From<Vec3> for GoToTarget {
-    #[inline]
-    fn from(pt: Vec3) -> Self {
-        Self::Local(pt)
-    }
-}
-
-/// Camera options for `map.goto(target, options)`.
-///
-/// Any option left as `None` preserves the camera's current value without modification.
-/// For Globe mode, `heading` and `tilt` are ignored, and camera orientation is uniquely
-/// calculated to center directly nadir over the target coordinate on the Earth sphere.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct GoToOptions {
-    /// Viewing distance in meters.
-    /// In Planar mode: viewing distance from target ground point to camera eye.
-    /// In Globe mode: distance from Earth center to camera eye (e.g. 18_000_000.0).
-    /// If None: current camera distance is preserved.
-    pub distance: Option<f32>,
-
-    /// Compass heading in degrees (0.0 = North, 90.0 = East, 180.0 = South, 270.0 = West).
-    /// Ignored in Globe mode.
-    /// If None: current heading/yaw is preserved.
-    pub heading: Option<f32>,
-
-    /// Tilt angle in degrees (0.0 = top-down 2D nadir view, 45.0 = 3D oblique perspective, 85.0 = near horizon).
-    /// Ignored in Globe mode.
-    /// If None: current tilt/pitch is preserved.
-    pub tilt: Option<f32>,
-
-    /// Whether to animate the camera smoothly to the destination.
-    /// Defaults to `true`. When set to `false`, the camera immediately snaps/teleports.
-    pub animate: Option<bool>,
-}
-
-impl GoToOptions {
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates options specifying only viewing distance in meters.
-    #[inline]
-    pub fn distance(distance: f32) -> Self {
-        Self {
-            distance: Some(distance),
-            heading: None,
-            tilt: None,
-            animate: None,
-        }
-    }
-
-    /// Creates options for instant teleportation (no animation).
-    #[inline]
-    pub fn immediate() -> Self {
-        Self {
-            distance: None,
-            heading: None,
-            tilt: None,
-            animate: Some(false),
-        }
-    }
-
-    /// Sets viewing distance in meters.
-    #[inline]
-    pub fn with_distance(mut self, distance: f32) -> Self {
-        self.distance = Some(distance);
-        self
-    }
-
-    /// Sets compass heading in degrees (0° = North, 90° = East). Ignored in Globe mode.
-    #[inline]
-    pub fn with_heading(mut self, heading: f32) -> Self {
-        self.heading = Some(heading);
-        self
-    }
-
-    /// Sets tilt angle in degrees (0° = nadir top-down, 45° = oblique, 85° = horizon). Ignored in Globe mode.
-    #[inline]
-    pub fn with_tilt(mut self, tilt: f32) -> Self {
-        self.tilt = Some(tilt);
-        self
-    }
-
-    /// Sets whether the transition should be smoothly animated (default: true).
-    /// Set to `false` for instant teleportation without animation.
-    #[inline]
-    pub fn with_animate(mut self, animate: bool) -> Self {
-        self.animate = Some(animate);
-        self
-    }
-
-    /// Returns whether animation is enabled (defaults to true if None).
-    #[inline]
-    pub fn is_animated(&self) -> bool {
-        self.animate.unwrap_or(true)
-    }
-}
-
-impl From<f32> for GoToOptions {
-    #[inline]
-    fn from(distance: f32) -> Self {
-        Self::distance(distance)
-    }
-}
-
-impl From<f64> for GoToOptions {
-    #[inline]
-    fn from(distance: f64) -> Self {
-        Self::distance(distance as f32)
-    }
-}
-
-/// Helper trait allowing `goto` to accept `None`, `GoToOptions`, `Option<GoToOptions>`, or numeric distances.
-pub trait IntoGoToOptions {
-    fn into_goto_options(self) -> Option<GoToOptions>;
-}
-
-impl IntoGoToOptions for Option<GoToOptions> {
-    #[inline]
-    fn into_goto_options(self) -> Option<GoToOptions> {
-        self
-    }
-}
-
-impl IntoGoToOptions for GoToOptions {
-    #[inline]
-    fn into_goto_options(self) -> Option<GoToOptions> {
-        Some(self)
-    }
-}
-
-impl IntoGoToOptions for f32 {
-    #[inline]
-    fn into_goto_options(self) -> Option<GoToOptions> {
-        Some(GoToOptions::distance(self))
-    }
-}
-
-impl IntoGoToOptions for f64 {
-    #[inline]
-    fn into_goto_options(self) -> Option<GoToOptions> {
-        Some(GoToOptions::distance(self as f32))
-    }
-}
-
-impl IntoGoToOptions for () {
-    #[inline]
-    fn into_goto_options(self) -> Option<GoToOptions> {
-        None
-    }
-}
-
 impl Camera {
     pub fn new(target: Vec3, distance: f32) -> Self {
         Self {
@@ -299,7 +68,7 @@ impl Camera {
             distance,
             target_distance: distance,
             target_lookat: target,
-            target_yaw: -std::f32::consts::FRAC_PI_4,
+            target_yaw: 0.0,
             target_pitch: std::f32::consts::FRAC_PI_6,
             ..Default::default()
         }
@@ -352,134 +121,6 @@ impl Camera {
     ) {
         let local = origin.lat_lon_to_local(lat, lon, elevation);
         self.zoom_to(local, distance);
-    }
-
-    /// Navigates the camera to a target destination with optional distance, heading, and tilt.
-    ///
-    /// - In **Planar (ENU)** mode: targets the local tangent coordinates converted from geographic coordinates.
-    ///   Applies distance, heading, and tilt if specified in `options`.
-    /// - In **Globe (ECEF)** mode: centers the geographic coordinate on the 3D globe looking nadir towards
-    ///   Earth center. `heading` and `tilt` are ignored. If `distance` is None, current distance is retained.
-    /// - By default, smoothly animates camera motion (`animate = true`). Set `opts.animate = false`
-    ///   or use `GoToOptions::immediate()` for instant teleportation.
-    pub fn goto(
-        &mut self,
-        origin: &ProjectOrigin,
-        mode: ProjectionMode,
-        target: GoToTarget,
-        options: Option<GoToOptions>,
-    ) {
-        let animate = options.as_ref().map_or(true, |o| o.is_animated());
-
-        match mode {
-            ProjectionMode::PlanarENU => {
-                let local_pt = match target {
-                    GoToTarget::Geo { longitude, latitude } => {
-                        origin.lat_lon_to_local(latitude, longitude, 0.0)
-                    }
-                    GoToTarget::Local(pt) => pt,
-                };
-
-                if animate {
-                    self.target_lookat = local_pt;
-
-                    if let Some(opts) = options {
-                        if let Some(dist) = opts.distance {
-                            self.target_distance = dist.max(1.0);
-                        }
-                        if let Some(heading_deg) = opts.heading {
-                            let mut target_yaw = heading_deg.to_radians();
-                            while target_yaw > std::f32::consts::PI {
-                                target_yaw -= std::f32::consts::TAU;
-                            }
-                            while target_yaw < -std::f32::consts::PI {
-                                target_yaw += std::f32::consts::TAU;
-                            }
-                            self.target_yaw = target_yaw;
-                        }
-                        if let Some(tilt_deg) = opts.tilt {
-                            let pitch_deg = (90.0 - tilt_deg).clamp(2.0, 88.5);
-                            self.target_pitch = pitch_deg.to_radians();
-                        }
-                    }
-                } else {
-                    self.target = local_pt;
-                    self.target_lookat = local_pt;
-
-                    if let Some(opts) = options {
-                        if let Some(dist) = opts.distance {
-                            self.distance = dist.max(1.0);
-                            self.target_distance = self.distance;
-                        }
-                        if let Some(heading_deg) = opts.heading {
-                            self.yaw = heading_deg.to_radians();
-                            self.normalize_yaw();
-                            self.target_yaw = self.yaw;
-                        }
-                        if let Some(tilt_deg) = opts.tilt {
-                            let pitch_deg = (90.0 - tilt_deg).clamp(2.0, 88.5);
-                            self.pitch = pitch_deg.to_radians();
-                            self.target_pitch = self.pitch;
-                        }
-                    }
-                    self.snap_smoothing();
-                }
-            }
-            ProjectionMode::GlobeECEF => {
-                let geo = match target {
-                    GoToTarget::Geo { longitude, latitude } => {
-                        GeoCoord::new(latitude, longitude, 0.0)
-                    }
-                    GoToTarget::Local(pt) => origin.local_to_geo(pt),
-                };
-
-                // Spherical orientation looking nadir at (lon, lat) on the Earth sphere
-                let (pitch, yaw) = crate::gis::crs::geo_to_globe_camera_angles(&geo);
-
-                if animate {
-                    self.target = Vec3::ZERO;
-                    self.target_lookat = Vec3::ZERO;
-                    self.normalize_yaw();
-                    self.target_pitch = pitch;
-                    self.target_yaw = yaw;
-
-                    // Heading and tilt are ignored in Globe mode as requested
-                    if let Some(opts) = options {
-                        if let Some(dist) = opts.distance {
-                            self.target_distance = dist.max(10.0);
-                        }
-                    }
-                } else {
-                    self.target = Vec3::ZERO;
-                    self.target_lookat = Vec3::ZERO;
-                    self.pitch = pitch;
-                    self.target_pitch = pitch;
-                    self.yaw = yaw;
-                    self.normalize_yaw();
-                    self.target_yaw = self.yaw;
-
-                    if let Some(opts) = options {
-                        if let Some(dist) = opts.distance {
-                            self.distance = dist.max(10.0);
-                            self.target_distance = self.distance;
-                        }
-                    }
-                    self.snap_smoothing();
-                }
-            }
-        }
-    }
-
-    /// Alias for `Camera::goto`.
-    #[inline]
-    pub fn go_to(
-        &mut self,
-        origin: &ProjectOrigin,
-        mode: ProjectionMode,
-        target: GoToTarget,
-        options: Option<GoToOptions>,
-    ) {
-        self.goto(origin, mode, target, options);
     }
 
     /// Computes the current geographic coordinate (lat, lon, elev) of the camera's target focus point.

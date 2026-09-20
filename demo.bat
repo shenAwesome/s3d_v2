@@ -39,7 +39,7 @@ echo [INFO] Starting Trunk server at http://127.0.0.1:8080 ...
 echo [INFO] Opening default web browser...
 echo.
 
-trunk serve --open %*
+trunk serve demo.html --example showcase --open %*
 
 if %ERRORLEVEL% neq 0 (
     echo.

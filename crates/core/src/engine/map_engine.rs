@@ -3,11 +3,12 @@ use crate::gis::basemap::BasemapManager;
 use crate::gis::cache::ResourceBudget;
 use crate::gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
 use crate::gis::geojson_loader::GisFeature;
-use crate::gis::layer::{Layer, LayerRegistry, LayerType};
+use crate::gis::layer::{
+    FeatureLayer, Layer, LayerGpuContext, LayerRegistry, LayerStatus, LayerType,
+    LayerUpdateContext,
+};
 use crate::gis::terrain::TerrainManager;
-use crate::gis::threedtiles::Tiles3DManager;
-use crate::gis::i3s::I3SManager;
-use crate::renderer::camera::{Camera, GlobeFlightState, GoToTarget, IntoGoToOptions};
+use crate::renderer::camera::{Camera, GlobeFlightState};
 use crate::renderer::render_engine::RenderEngine;
 use crate::scene::scene::Scene;
 use crate::gis::source::SourceRegistry;
@@ -17,18 +18,21 @@ use crate::solar::sun_calc::{calculate_solar_position, SolarPosition};
 use crate::spatial::picking::{screen_to_ray, Ray};
 use crate::engine::command::{
     BasemapCommand, CameraCommand, ClockCommand, CommandError, EdgeCommand,
-    EnvironmentCommand, I3SCommand, LayerCommand, MapCommand, TerrainCommand,
+    EnvironmentCommand, LayerCommand, MapCommand, TerrainCommand,
 };
 use crate::engine::event::MapEvent;
 use crate::engine::view::MapView;
 
 /// Core 3D GIS & Map Engine
 ///
-/// Encapsulates 3D GPU rendering, tile streaming (basemaps, terrain, 3D tiles),
-/// vector layers, solar lighting/shadow analysis, camera navigation, and spatial picking.
+/// Encapsulates 3D GPU rendering, tile streaming (basemaps, terrain),
+/// polymorphic GIS layers, solar lighting/shadow analysis, camera navigation, and spatial picking.
 ///
 /// Headless and decoupled from any UI framework.
 pub struct MapEngine {
+    // GIS Document Model
+    pub map: crate::gis::map::Map,
+
     // Renderer
     pub renderer: Option<RenderEngine>,
 
@@ -41,9 +45,7 @@ pub struct MapEngine {
     pub sources: SourceRegistry,
     pub basemap: BasemapManager,
     pub terrain: TerrainManager,
-    pub i3s: I3SManager,
-    pub threedtiles: Tiles3DManager,
-    pub layers: Vec<Layer>,
+    pub layers: Vec<Box<dyn Layer>>,
     pub layer_registry: LayerRegistry,
     pub budget: ResourceBudget,
     pub collider: SceneCollider,
@@ -69,6 +71,9 @@ pub struct MapEngine {
 
     // Active Globe Flight Animation
     pub active_globe_flight: Option<GlobeFlightState>,
+
+    // Projection Auto-Switch Configuration (MSL Altitude threshold in meters)
+    pub auto_switch_altitude: Option<f64>,
 
     // Status & Event Queue
     pub status_message: String,
@@ -100,6 +105,7 @@ impl MapEngine {
         );
 
         Self {
+            map: crate::gis::map::Map::with_basemap(crate::gis::map::Basemap::osm()),
             renderer: None,
             scene: Scene::new(origin),
             camera: Camera::default(),
@@ -108,8 +114,6 @@ impl MapEngine {
             sources: SourceRegistry::new(),
             basemap: BasemapManager::new(),
             terrain: TerrainManager::new(),
-            i3s: I3SManager::new(origin),
-            threedtiles: Tiles3DManager::new(),
             layers: Vec::new(),
             layer_registry: LayerRegistry::default(),
             budget: ResourceBudget::default(),
@@ -132,9 +136,127 @@ impl MapEngine {
             mouse_drag_distance: 0.0,
 
             active_globe_flight: None,
+            auto_switch_altitude: Some(50_000.0),
             status_message: String::new(),
             events: Vec::new(),
         }
+    }
+
+    /// Creates a new MapEngine initialized from a GIS Map document model
+    pub fn from_map(map: crate::gis::map::Map) -> Self {
+        let origin = ProjectOrigin::from_geo(map.origin);
+        let mut engine = Self::new(origin);
+        engine.set_map(map);
+        engine
+    }
+
+    /// Attaches a GIS Map document model and synchronizes origin, basemap, terrain, and operational layers
+    pub fn set_map(&mut self, map: crate::gis::map::Map) {
+        self.set_origin(ProjectOrigin::from_geo(map.origin));
+        self.clear_layers();
+        self.align_north();
+        if let Some(basemap) = &map.basemap {
+            self.apply_basemap(basemap);
+        }
+        // Synchronize Ground elevation
+        if !map.ground.layers.is_empty() {
+            self.terrain.is_enabled = true;
+            self.terrain.height_exaggeration = map.ground.elevation_exaggeration;
+        } else {
+            self.terrain.is_enabled = false;
+        }
+        self.map = map;
+        match self.map.viewing_mode {
+            crate::gis::map::ViewingMode::Auto { threshold_altitude } => {
+                self.auto_switch_altitude = Some(threshold_altitude);
+            }
+            crate::gis::map::ViewingMode::Globe => {
+                self.auto_switch_altitude = None;
+                self.projection_mode = ProjectionMode::GlobeECEF;
+                if let Some(r) = &mut self.renderer {
+                    r.projection_mode = ProjectionMode::GlobeECEF;
+                    r.morph_progress = 1.0;
+                }
+            }
+            crate::gis::map::ViewingMode::Planar => {
+                self.auto_switch_altitude = None;
+                self.projection_mode = ProjectionMode::PlanarENU;
+                if let Some(r) = &mut self.renderer {
+                    r.projection_mode = ProjectionMode::PlanarENU;
+                    r.morph_progress = 0.0;
+                }
+            }
+        }
+
+        // Frame the new map origin with sensible default overview
+        if self.projection_mode == ProjectionMode::GlobeECEF {
+            self.camera.target = glam::Vec3::ZERO;
+            self.camera.target_lookat = glam::Vec3::ZERO;
+            self.camera.distance = 18_000_000.0;
+            self.camera.target_distance = 18_000_000.0;
+        } else {
+            self.camera.target = glam::Vec3::ZERO;
+            self.camera.target_lookat = glam::Vec3::ZERO;
+            self.camera.distance = 2500.0;
+            self.camera.target_distance = 2500.0;
+            self.camera.pitch = 45.0f32.to_radians();
+            self.camera.target_pitch = 45.0f32.to_radians();
+        }
+        self.camera.snap_smoothing();
+    }
+
+    /// Enables or disables automatic switching between Globe and Planar projection
+    /// based on camera altitude above Mean Sea Level (MSL).
+    ///
+    /// Pass `Some(threshold_meters)` (e.g. `Some(50_000.0)`) or `None` to disable.
+    pub fn set_auto_projection_switch(&mut self, threshold: Option<f64>) {
+        self.auto_switch_altitude = threshold;
+    }
+
+    /// Sets or replaces the active basemap using an Esri-style Basemap
+    pub fn set_basemap(&mut self, basemap: crate::gis::map::Basemap) {
+        self.apply_basemap(&basemap);
+        self.map.set_basemap(basemap);
+    }
+
+    fn apply_basemap(&mut self, basemap: &crate::gis::map::Basemap) {
+        if basemap.base_layers.is_empty() {
+            self.basemap.is_enabled = false;
+            self.basemap.provider = crate::gis::basemap::BasemapProvider::None;
+        } else if let Some(first_layer) = basemap.base_layers.get(0) {
+            self.basemap.is_enabled = true;
+            match first_layer.id() {
+                "esri_imagery_tiles" | "esri_imagery" => {
+                    self.basemap.provider = crate::gis::basemap::BasemapProvider::EsriImagery;
+                }
+                "esri_streets_tiles" | "esri_streets" => {
+                    self.basemap.provider = crate::gis::basemap::BasemapProvider::EsriStreet;
+                }
+                "esri_topo_tiles" | "esri_topo" => {
+                    self.basemap.provider = crate::gis::basemap::BasemapProvider::EsriTopo;
+                }
+                _ => {
+                    self.basemap.provider = crate::gis::basemap::BasemapProvider::OpenStreetMap;
+                }
+            }
+        }
+        self.basemap.reset_cache();
+        if let Some(r) = &mut self.renderer {
+            r.clear_basemap_tiles();
+        }
+    }
+
+    /// Configures 3D digital elevation model (DEM) terrain streaming from an ElevationLayer
+    pub fn set_elevation_layer(
+        &mut self,
+        layer: std::sync::Arc<dyn crate::gis::layer::Layer>,
+        exaggeration: f32,
+    ) {
+        self.terrain.is_enabled = true;
+        self.terrain.height_exaggeration = exaggeration;
+        self.map.ground.layers.clear();
+        self.map.ground.add_layer(layer);
+        self.map.ground.elevation_exaggeration = exaggeration;
     }
 
     /// Attach a pre-configured RenderEngine
@@ -143,10 +265,15 @@ impl MapEngine {
         self.reload_all_gpu_meshes();
     }
 
-    /// Changes the project origin (local coordinate system center) and updates GIS caches
-    pub fn set_origin(&mut self, origin: ProjectOrigin) {
+    /// Changes the project origin (local coordinate system center) and updates GIS caches.
+    /// Accepts `ProjectOrigin`, `GeoCoord`, or `[x, y, z]` array (`[longitude, latitude, elevation]`).
+    pub fn set_origin(&mut self, origin: impl Into<ProjectOrigin>) {
+        let origin = origin.into();
         self.scene.origin = origin;
-        self.i3s.set_origin(origin);
+        self.map.origin = origin.origin;
+        for layer in &mut self.layers {
+            layer.on_origin_changed(&origin);
+        }
         self.basemap.reset_cache();
         if let Some(r) = &mut self.renderer {
             r.clear_basemap_tiles();
@@ -167,7 +294,6 @@ impl MapEngine {
             budget: &self.budget,
             basemap: &self.basemap,
             terrain: &self.terrain,
-            i3s: &self.i3s,
             solar_pos: &self.solar_pos,
             solar_dt: &self.solar_dt,
             sunlight_enabled: self.sunlight_enabled,
@@ -193,8 +319,7 @@ impl MapEngine {
     pub fn is_streaming(&self) -> bool {
         self.basemap.is_streaming()
             || self.terrain.is_streaming()
-            || self.threedtiles.is_streaming()
-            || self.i3s.is_streaming()
+            || self.layers.iter().any(|l| l.is_streaming())
     }
 
     /// Per-frame update: advances flight transitions, updates streaming data, syncs solar position
@@ -334,64 +459,37 @@ impl MapEngine {
             }
         }
 
-        // I3S
-        if self.i3s.is_enabled {
-            let visible_nodes = self.i3s.calculate_visible_nodes(&self.camera, vp_w, vp_h, &self.scene.origin);
-            self.i3s.request_nodes(&visible_nodes);
-            let new_i3s_nodes = self.i3s.drain_completed();
-            if !new_i3s_nodes.is_empty() {
-                self.has_new_gpu_tiles = true;
-            }
-            if let Some(renderer) = &mut self.renderer {
-                for node in new_i3s_nodes {
-                    for f in &node.features {
-                        self.collider.add_mesh(&f.raw_mesh, &format!("i3s_feat_{}_{}", node.node_id, f.feature_id));
+        // Operational Layers (polymorphic streaming, LOD evaluation, GPU synchronization)
+        let update_ctx = LayerUpdateContext {
+            camera: &self.camera,
+            origin: &self.scene.origin,
+            projection_mode: self.projection_mode,
+            viewport_width: vp_w,
+            viewport_height: vp_h,
+            dt: 0.016,
+        };
+
+        for layer in &mut self.layers {
+            if layer.visible() {
+                let status = layer.update(&update_ctx);
+                if let LayerStatus::Streaming { pending_requests } = status {
+                    if pending_requests > 0 {
+                        self.has_new_gpu_tiles = true;
                     }
-                    renderer.add_i3s_tile(node, [1.0, 1.0, 1.0], self.i3s.opacity, true);
-                }
-                let evicted_i3s = renderer.prune_unneeded_i3s_tiles(&visible_nodes);
-                for ev in evicted_i3s {
-                    self.i3s.unmark_loaded(ev);
-                    self.collider.remove_features_with_prefix(&format!("i3s_feat_{}_", ev));
                 }
             }
         }
 
-        // 3D Tiles
-        if self.threedtiles.is_enabled {
-            let (active_3d_tiles, newly_loaded) = self.threedtiles.update_streaming(
-                &self.scene.origin,
-                &self.camera,
-                vp_w,
-                vp_h,
-                self.projection_mode,
-            );
-            if !newly_loaded.is_empty() {
-                self.has_new_gpu_tiles = true;
-            }
-            if let Some(renderer) = &mut self.renderer {
-                let tint = self.threedtiles.tint;
-                let opacity = self.threedtiles.opacity;
-
-                for mesh in &newly_loaded {
-                    let feat_id = format!("threedtile_{}", mesh.id);
-                    self.collider.remove_features_with_prefix(&feat_id);
-                    self.collider.add_threedtile_mesh(mesh, &feat_id);
-                    renderer.add_threedtile(mesh.clone(), tint, opacity, self.threedtiles.replace_texture);
-                }
-                for tile_id in &active_3d_tiles {
-                    let feat_id = format!("threedtile_{}", tile_id);
-                    if !renderer.threedtiles_gpu_tiles.contains_key(tile_id) {
-                        if let Some(mesh) = self.threedtiles.loaded_tiles.get(tile_id) {
-                            self.collider.remove_features_with_prefix(&feat_id);
-                            self.collider.add_threedtile_mesh(mesh, &feat_id);
-                            renderer.add_threedtile(mesh.clone(), tint, opacity, self.threedtiles.replace_texture);
-                        }
-                    }
-                }
-                let evicted = renderer.prune_unneeded_threedtiles(&active_3d_tiles);
-                for ev in evicted {
-                    self.collider.remove_features_with_prefix(&format!("threedtile_{}", ev));
+        if let Some(renderer) = &mut self.renderer {
+            let mut gpu_ctx = LayerGpuContext {
+                renderer,
+                collider: &mut self.collider,
+                origin: &self.scene.origin,
+                projection_mode: self.projection_mode,
+            };
+            for layer in &mut self.layers {
+                if layer.visible() {
+                    layer.sync_gpu(&mut gpu_ctx);
                 }
             }
         }
@@ -512,7 +610,16 @@ impl MapEngine {
         true
     }
 
-    pub fn transition_to_planar_at_geo(&mut self, lat: f64, lon: f64, target_distance: f32) {
+    /// Transitions from 3D Globe to Local Planar ENU centered on the specified geographic coordinate,
+    /// with customizable camera heading (degrees, 0° = North) and tilt (degrees, 0° = nadir top-down, 45° = oblique).
+    pub fn transition_to_planar_at_geo_with_pose(
+        &mut self,
+        lat: f64,
+        lon: f64,
+        target_distance: f32,
+        heading_deg: f32,
+        tilt_deg: f32,
+    ) {
         if self.projection_mode == ProjectionMode::PlanarENU {
             return;
         }
@@ -541,15 +648,31 @@ impl MapEngine {
         }
         self.basemap.reset_cache();
         self.terrain.clear_cache();
-        self.i3s.clear_streaming_state();
-        self.i3s.set_origin(self.scene.origin);
+        for layer in &mut self.layers {
+            layer.on_origin_changed(&self.scene.origin);
+        }
 
         self.camera.distance = target_distance.clamp(100.0, 50_000.0);
         self.camera.target_distance = self.camera.distance;
-        self.camera.pitch = 1.54;
-        self.camera.yaw = 0.0;
+
+        // Heading: 0° = North, 90° = East
+        self.camera.yaw = heading_deg.to_radians();
+        self.camera.normalize_yaw();
+        self.camera.target_yaw = self.camera.yaw;
+
+        // Tilt: 0° = nadir top-down, 45° = oblique, 85° = horizon (pitch = 90° - tilt)
+        let pitch_deg = (90.0 - tilt_deg).clamp(2.0, 88.5);
+        self.camera.pitch = pitch_deg.to_radians();
+        self.camera.target_pitch = self.camera.pitch;
+
         self.camera.snap_smoothing();
         self.reload_all_gpu_meshes();
+    }
+
+    /// Transitions from 3D Globe to Local Planar ENU centered on the specified geographic coordinate.
+    /// Defaults to heading 0.0° (North) and tilt 45.0° (oblique 3D perspective).
+    pub fn transition_to_planar_at_geo(&mut self, lat: f64, lon: f64, target_distance: f32) {
+        self.transition_to_planar_at_geo_with_pose(lat, lon, target_distance, 0.0, 45.0);
     }
 
     pub fn transition_to_globe(&mut self) {
@@ -570,7 +693,6 @@ impl MapEngine {
         }
         self.basemap.reset_cache();
         self.terrain.clear_cache();
-        self.i3s.clear_streaming_state();
 
         const WGS84_RADIUS: f32 = crate::gis::crs::WGS84_A as f32;
         self.camera.target = glam::Vec3::ZERO;
@@ -630,47 +752,44 @@ impl MapEngine {
             },
             MapCommand::Layer(layer_cmd) => match layer_cmd {
                 LayerCommand::SetVisibility { id, visible } => {
-                    if let Some(l) = self.layers.iter_mut().find(|l| l.id == id) {
-                        l.visible = visible;
+                    if let Some(l) = self.layers.iter_mut().find(|l| l.id() == id) {
+                        l.set_visible(visible);
                         self.reload_all_gpu_meshes();
                     } else {
                         return Err(CommandError::LayerNotFound(id));
                     }
                 }
                 LayerCommand::SetOpacity { id, opacity } => {
-                    if let Some(l) = self.layers.iter_mut().find(|l| l.id == id) {
-                        l.opacity = opacity.clamp(0.0, 1.0);
+                    if let Some(l) = self.layers.iter_mut().find(|l| l.id() == id) {
+                        l.set_opacity(opacity);
                         self.reload_all_gpu_meshes();
                     } else {
                         return Err(CommandError::LayerNotFound(id));
                     }
                 }
                 LayerCommand::SetColorTint { id, tint } => {
-                    if let Some(l) = self.layers.iter_mut().find(|l| l.id == id) {
-                        l.color_tint = tint;
+                    if let Some(l) = self.layers.iter_mut().find(|l| l.id() == id) {
+                        l.set_color_tint(tint);
                         self.reload_all_gpu_meshes();
                     } else {
                         return Err(CommandError::LayerNotFound(id));
                     }
                 }
                 LayerCommand::SetShadow { id, cast_shadows } => {
-                    if let Some(l) = self.layers.iter_mut().find(|l| l.id == id) {
-                        l.cast_shadows = cast_shadows;
+                    if let Some(l) = self.layers.iter_mut().find(|l| l.id() == id) {
+                        l.set_cast_shadows(cast_shadows);
                         self.reload_all_gpu_meshes();
                     } else {
                         return Err(CommandError::LayerNotFound(id));
                     }
                 }
                 LayerCommand::Remove(id) => {
-                    if let Some(pos) = self.layers.iter().position(|l| l.id == id) {
-                        self.layers.remove(pos);
-                        self.reload_all_gpu_meshes();
-                    } else {
+                    if !self.remove_layer(&id) {
                         return Err(CommandError::LayerNotFound(id));
                     }
                 }
                 LayerCommand::Add(layer) => {
-                    self.layers.push(*layer);
+                    self.layers.push(layer);
                     self.reload_all_gpu_meshes();
                 }
                 LayerCommand::AddDescriptor(_) => {}
@@ -698,20 +817,6 @@ impl MapEngine {
                 }
                 TerrainCommand::SetHeightExaggeration(exagg) => {
                     self.terrain.height_exaggeration = exagg;
-                }
-            },
-            MapCommand::I3S(i3s_cmd) => match i3s_cmd {
-                I3SCommand::SetEnabled(enabled) => {
-                    self.i3s.is_enabled = enabled;
-                }
-                I3SCommand::SetServiceUrl(url) => {
-                    self.i3s.service_url = url;
-                }
-                I3SCommand::SetOpacity(opacity) => {
-                    self.i3s.opacity = opacity;
-                }
-                I3SCommand::SetLodThresholdScale(scale) => {
-                    self.i3s.lod_threshold_scale = scale;
                 }
             },
             MapCommand::Clock(clock_cmd) => match clock_cmd {
@@ -816,8 +921,179 @@ impl MapEngine {
         self.events.push(MapEvent::CameraMoved);
     }
 
+    /// Navigates the map camera to a target destination with optional distance, heading, tilt, and animation.
+    ///
+    /// - In **Planar (ENU)** mode: targets the local tangent coordinates converted from geographic coordinates.
+    ///   Applies distance, heading, and tilt if specified in `options`.
+    /// - In **Globe (ECEF)** mode: centers the geographic coordinate on the 3D globe looking nadir towards
+    ///   Earth center. `heading` and `tilt` are ignored. If `distance` is None, current distance is retained.
+    /// - By default, smoothly animates camera motion (`animate = true`). Set `opts.animate = false`
+    ///   or use `GoToOptions::immediate()` for instant teleportation.
     pub fn goto<T: IntoGoToOptions>(&mut self, target: impl Into<GoToTarget>, options: T) {
-        self.camera.goto(&self.scene.origin, self.projection_mode, target.into(), options.into_goto_options());
+        let target = target.into();
+        let options = options.into_goto_options();
+        let animate = options.as_ref().map_or(true, |o| o.is_animated());
+        const WGS84_RADIUS: f32 = 6_378_137.0;
+
+        match self.projection_mode {
+            ProjectionMode::PlanarENU => {
+                let auto_threshold = self.auto_switch_altitude.unwrap_or(0.0) as f32;
+                if auto_threshold > 0.0 {
+                    if let Some(opts) = options {
+                        if let Some(dist) = opts.distance {
+                            if dist > auto_threshold * 1.1 {
+                                // Distance exceeds planar limit: auto-transition up to Globe
+                                let geo = match target {
+                                    GoToTarget::Current => self.scene.origin.local_to_geo(self.camera.target),
+                                    GoToTarget::Geo { longitude, latitude, elevation } => {
+                                        GeoCoord::new(latitude, longitude, elevation.unwrap_or(0.0))
+                                    }
+                                    GoToTarget::Local(pt) => self.scene.origin.local_to_geo(pt),
+                                };
+                                self.transition_to_globe();
+                                self.goto(geo, options);
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                let (local_pt, target_geo) = match target {
+                    GoToTarget::Current => (self.camera.target, None),
+                    GoToTarget::Geo { longitude, latitude, elevation } => {
+                        let elev = elevation.unwrap_or(0.0);
+                        let pt = self.scene.origin.lat_lon_to_local(latitude, longitude, elev);
+                        (pt, Some((latitude, longitude)))
+                    }
+                    GoToTarget::Local(pt) => (pt, None),
+                };
+
+                // If target coordinate is > 50km from current origin, re-center origin to prevent tangential planar distortion
+                let local_pt = if let Some((lat, lon)) = target_geo {
+                    if local_pt.x.abs() > 50_000.0 || local_pt.z.abs() > 50_000.0 {
+                        self.set_origin(GeoCoord::new(lat, lon, 0.0));
+                        Vec3::new(0.0, local_pt.y, 0.0)
+                    } else {
+                        local_pt
+                    }
+                } else {
+                    local_pt
+                };
+
+                if animate {
+                    self.camera.target_lookat = local_pt;
+
+                    if let Some(opts) = options {
+                        if let Some(dist) = opts.distance {
+                            self.camera.target_distance = dist.max(1.0);
+                        }
+                        if let Some(heading_deg) = opts.heading {
+                            let mut target_yaw = heading_deg.to_radians();
+                            while target_yaw > std::f32::consts::PI {
+                                target_yaw -= std::f32::consts::TAU;
+                            }
+                            while target_yaw < -std::f32::consts::PI {
+                                target_yaw += std::f32::consts::TAU;
+                            }
+                            self.camera.target_yaw = target_yaw;
+                        }
+                        if let Some(tilt_deg) = opts.tilt {
+                            let pitch_deg = (90.0 - tilt_deg).clamp(2.0, 88.5);
+                            self.camera.target_pitch = pitch_deg.to_radians();
+                        }
+                    }
+                } else {
+                    self.camera.target = local_pt;
+                    self.camera.target_lookat = local_pt;
+
+                    if let Some(opts) = options {
+                        if let Some(dist) = opts.distance {
+                            self.camera.distance = dist.max(1.0);
+                            self.camera.target_distance = self.camera.distance;
+                        }
+                        if let Some(heading_deg) = opts.heading {
+                            self.camera.yaw = heading_deg.to_radians();
+                            self.camera.normalize_yaw();
+                            self.camera.target_yaw = self.camera.yaw;
+                        }
+                        if let Some(tilt_deg) = opts.tilt {
+                            let pitch_deg = (90.0 - tilt_deg).clamp(2.0, 88.5);
+                            self.camera.pitch = pitch_deg.to_radians();
+                            self.camera.target_pitch = self.camera.pitch;
+                        }
+                    }
+                    self.camera.snap_smoothing();
+                }
+            }
+            ProjectionMode::GlobeECEF => {
+                let geo = match target {
+                    GoToTarget::Current => crate::gis::crs::ecef_to_geodetic(self.camera.eye_position()),
+                    GoToTarget::Geo { longitude, latitude, elevation } => {
+                        GeoCoord::new(latitude, longitude, elevation.unwrap_or(0.0))
+                    }
+                    GoToTarget::Local(pt) => self.scene.origin.local_to_geo(pt),
+                };
+
+                // Interpret distance: if dist < WGS84_RADIUS, it is altitude above the Earth surface.
+                // If dist >= WGS84_RADIUS, it is absolute radial distance from Earth center.
+                let (altitude, radial_distance) = match options.as_ref().and_then(|o| o.distance) {
+                    Some(dist) => {
+                        if dist >= WGS84_RADIUS {
+                            (dist - WGS84_RADIUS, dist)
+                        } else {
+                            (dist, WGS84_RADIUS + dist)
+                        }
+                    }
+                    None => {
+                        let cur_radial = self.camera.distance;
+                        let cur_alt = (cur_radial - WGS84_RADIUS).max(10.0);
+                        (cur_alt, cur_radial)
+                    }
+                };
+
+                let auto_threshold = self.auto_switch_altitude.unwrap_or(0.0) as f32;
+
+                // In Auto-switch mode, if requested altitude <= threshold (e.g. <= 50,000 m),
+                // smoothly transition to Planar mode at the target geographic coordinate!
+                if auto_threshold > 0.0 && altitude <= auto_threshold {
+                    let heading = options.as_ref().and_then(|o| o.heading).unwrap_or(0.0);
+                    let tilt = options.as_ref().and_then(|o| o.tilt).unwrap_or(45.0);
+                    self.transition_to_planar_at_geo_with_pose(
+                        geo.latitude,
+                        geo.longitude,
+                        altitude.clamp(100.0, 50_000.0),
+                        heading,
+                        tilt,
+                    );
+                    self.events.push(MapEvent::CameraMoved);
+                    return;
+                }
+
+                // Otherwise, stay in Globe mode orbiting around Earth center at radial_distance
+                let (pitch, yaw) = crate::gis::crs::geo_to_globe_camera_angles(&geo);
+
+                if animate {
+                    self.camera.target = Vec3::ZERO;
+                    self.camera.target_lookat = Vec3::ZERO;
+                    self.camera.normalize_yaw();
+                    self.camera.target_pitch = pitch;
+                    self.camera.target_yaw = yaw;
+                    self.camera.target_distance = radial_distance;
+                } else {
+                    self.camera.target = Vec3::ZERO;
+                    self.camera.target_lookat = Vec3::ZERO;
+                    self.camera.pitch = pitch;
+                    self.camera.target_pitch = pitch;
+                    self.camera.yaw = yaw;
+                    self.camera.normalize_yaw();
+                    self.camera.target_yaw = self.camera.yaw;
+                    self.camera.distance = radial_distance;
+                    self.camera.target_distance = radial_distance;
+                    self.camera.snap_smoothing();
+                }
+            }
+        }
+
         self.events.push(MapEvent::CameraMoved);
     }
 
@@ -835,6 +1111,7 @@ impl MapEngine {
 
     pub fn align_north(&mut self) {
         self.camera.yaw = 0.0;
+        self.camera.target_yaw = 0.0;
         self.events.push(MapEvent::CameraMoved);
     }
 
@@ -851,18 +1128,43 @@ impl MapEngine {
         }
     }
 
-    // --- GIS Layers & Meshes ---
+    // --- GIS Layers ---
 
-    pub fn add_layer(&mut self, layer: Layer) -> usize {
+    /// Appends any layer implementing [`Layer`] to the engine.
+    ///
+    /// Accepts concrete layer types (e.g. `FeatureLayer`, `SceneLayer`, `IntegratedMeshLayer`)
+    /// or `Box<dyn Layer>`.
+    pub fn add_layer<L: Layer>(&mut self, mut layer: L) -> usize {
+        layer.on_origin_changed(&self.scene.origin);
+        self.layers.push(Box::new(layer));
+        let idx = self.layers.len() - 1;
+        self.reload_all_gpu_meshes();
+        idx
+    }
+
+    /// Appends a pre-boxed layer implementing [`Layer`] to the engine.
+    pub fn add_boxed_layer(&mut self, mut layer: Box<dyn Layer>) -> usize {
+        layer.on_origin_changed(&self.scene.origin);
         self.layers.push(layer);
         let idx = self.layers.len() - 1;
         self.reload_all_gpu_meshes();
         idx
     }
 
+    /// Removes an operational layer by its unique ID.
+    /// Cleans up GPU resources, collider entries, and internal buffers.
     pub fn remove_layer(&mut self, id: &str) -> bool {
-        if let Some(pos) = self.layers.iter().position(|l| l.id == id) {
-            self.layers.remove(pos);
+        if let Some(pos) = self.layers.iter().position(|l| l.id() == id) {
+            let mut removed = self.layers.remove(pos);
+            if let Some(renderer) = &mut self.renderer {
+                let mut gpu_ctx = LayerGpuContext {
+                    renderer,
+                    collider: &mut self.collider,
+                    origin: &self.scene.origin,
+                    projection_mode: self.projection_mode,
+                };
+                removed.destroy(&mut gpu_ctx);
+            }
             self.reload_all_gpu_meshes();
             true
         } else {
@@ -870,40 +1172,53 @@ impl MapEngine {
         }
     }
 
+    /// Removes all operational layers and cleans up their GPU resources.
+    pub fn clear_layers(&mut self) {
+        if let Some(renderer) = &mut self.renderer {
+            let mut gpu_ctx = LayerGpuContext {
+                renderer,
+                collider: &mut self.collider,
+                origin: &self.scene.origin,
+                projection_mode: self.projection_mode,
+            };
+            for mut layer in self.layers.drain(..) {
+                layer.destroy(&mut gpu_ctx);
+            }
+        } else {
+            self.layers.clear();
+        }
+        self.reload_all_gpu_meshes();
+    }
+
+    /// Retrieves an immutable reference to a layer by ID downcast to concrete type `L`.
+    pub fn get_layer<L: 'static>(&self, id: &str) -> Option<&L> {
+        self.layers
+            .iter()
+            .find(|l| l.id() == id)
+            .and_then(|l| l.as_any().downcast_ref::<L>())
+    }
+
+    /// Retrieves a mutable reference to a layer by ID downcast to concrete type `L`.
+    pub fn get_layer_mut<L: 'static>(&mut self, id: &str) -> Option<&mut L> {
+        self.layers
+            .iter_mut()
+            .find(|l| l.id() == id)
+            .and_then(|l| l.as_any_mut().downcast_mut::<L>())
+    }
+
     pub fn load_geojson(&mut self, geojson_str: &str, layer_name: &str) -> Result<usize, String> {
         let dataset = crate::gis::geojson_loader::parse_geojson(geojson_str, Some(self.scene.origin))?;
-        let mut layer = Layer::new(
+        let mut layer = FeatureLayer::new(
             format!("layer_{}", self.layers.len()),
             layer_name.to_string(),
             LayerType::Buildings,
             [0.85, 0.88, 0.92, 1.0],
         );
         layer.features = dataset.features;
-        self.layers.push(layer);
+        self.layers.push(Box::new(layer));
         let idx = self.layers.len() - 1;
         self.reload_all_gpu_meshes();
         Ok(idx)
-    }
-
-    /// Loads the builtin Melbourne CBD sample buildings dataset
-    pub fn load_sample_buildings(&mut self) {
-        let sample_geojson = include_str!("../../assets/sample_buildings.geojson");
-        if let Ok(ds) = crate::gis::geojson_loader::parse_geojson(sample_geojson, Some(self.scene.origin)) {
-            let mut lyr = Layer::new(
-                "layer_melbourne_cbd_default".to_string(),
-                "Melbourne CBD Buildings".to_string(),
-                LayerType::Buildings,
-                [0.85, 0.88, 0.92, 1.0],
-            );
-            lyr.features = ds.features;
-            if let Some(pos) = self.layers.iter().position(|l| l.id == "layer_melbourne_cbd_default") {
-                self.layers[pos] = lyr;
-            } else {
-                self.layers.insert(0, lyr);
-            }
-            self.selected_layer_idx = Some(0);
-            self.reload_all_gpu_meshes();
-        }
     }
 
     /// Rebuilds extruded 3D meshes for a specific layer if missing
@@ -912,28 +1227,30 @@ impl MapEngine {
             return;
         }
         let origin = self.scene.origin;
-        for feature in &mut self.layers[layer_idx].features {
-            if feature.mesh.is_none() && !feature.geo_polygons.is_empty() {
-                let mut combined_mesh = crate::gis::extrusion::RawMeshData::new();
-                for poly in &feature.geo_polygons {
-                    let rings_local: Vec<Vec<glam::Vec2>> = poly.iter().map(|ring| {
-                        ring.iter().map(|&[lat, lon]| {
-                            let loc = origin.lat_lon_to_local(lat, lon, 0.0);
-                            glam::Vec2::new(loc.x, -loc.z)
-                        }).collect()
-                    }).collect();
-                    if let Some(poly_mesh) = crate::gis::extrusion::extrude_polygon(&rings_local, feature.min_height, (feature.height - feature.min_height).max(1.0)) {
-                        let v_offset = combined_mesh.positions.len() as u32;
-                        combined_mesh.positions.extend(poly_mesh.positions);
-                        combined_mesh.normals.extend(poly_mesh.normals);
-                        combined_mesh.uvs.extend(poly_mesh.uvs);
-                        for idx in poly_mesh.indices {
-                            combined_mesh.indices.push(v_offset + idx);
+        if let Some(feat_layer) = self.layers[layer_idx].as_any_mut().downcast_mut::<FeatureLayer>() {
+            for feature in &mut feat_layer.features {
+                if feature.mesh.is_none() && !feature.geo_polygons.is_empty() {
+                    let mut combined_mesh = crate::gis::extrusion::RawMeshData::new();
+                    for poly in &feature.geo_polygons {
+                        let rings_local: Vec<Vec<glam::Vec2>> = poly.iter().map(|ring| {
+                            ring.iter().map(|&[lat, lon]| {
+                                let loc = origin.lat_lon_to_local(lat, lon, 0.0);
+                                glam::Vec2::new(loc.x, -loc.z)
+                            }).collect()
+                        }).collect();
+                        if let Some(poly_mesh) = crate::gis::extrusion::extrude_polygon(&rings_local, feature.min_height, (feature.height - feature.min_height).max(1.0)) {
+                            let v_offset = combined_mesh.positions.len() as u32;
+                            combined_mesh.positions.extend(poly_mesh.positions);
+                            combined_mesh.normals.extend(poly_mesh.normals);
+                            combined_mesh.uvs.extend(poly_mesh.uvs);
+                            for idx in poly_mesh.indices {
+                                combined_mesh.indices.push(v_offset + idx);
+                            }
                         }
                     }
-                }
-                if !combined_mesh.positions.is_empty() {
-                    feature.mesh = Some(combined_mesh);
+                    if !combined_mesh.positions.is_empty() {
+                        feature.mesh = Some(combined_mesh);
+                    }
                 }
             }
         }
@@ -945,9 +1262,13 @@ impl MapEngine {
         self.collider.clear();
 
         for i in 0..self.layers.len() {
-            let needs_rebuild = self.layers[i].features.iter().any(|f| {
-                !f.geo_polygons.is_empty() && f.mesh.is_none()
-            });
+            let needs_rebuild = if let Some(feat_layer) = self.layers[i].as_any().downcast_ref::<FeatureLayer>() {
+                feat_layer.features.iter().any(|f| {
+                    !f.geo_polygons.is_empty() && f.mesh.is_none()
+                })
+            } else {
+                false
+            };
             if needs_rebuild {
                 self.rebuild_layer_feature_meshes(i);
             }
@@ -955,33 +1276,35 @@ impl MapEngine {
 
         // 1. Populate SceneCollider and SceneNodes for spatial queries and picking
         for layer in &self.layers {
-            if !layer.visible {
+            if !layer.visible() {
                 continue;
             }
-            for feature in &layer.features {
-                if let Some(mesh) = &feature.mesh {
-                    self.collider.add_mesh(mesh, &feature.id);
+            if let Some(feat_layer) = layer.as_any().downcast_ref::<FeatureLayer>() {
+                for feature in &feat_layer.features {
+                    if let Some(mesh) = &feature.mesh {
+                        self.collider.add_mesh(mesh, &feature.id);
 
-                    let mut aabb_min = Vec3::splat(f32::INFINITY);
-                    let mut aabb_max = Vec3::splat(f32::NEG_INFINITY);
-                    for p in &mesh.positions {
-                        let v = Vec3::from_array(*p);
-                        aabb_min = aabb_min.min(v);
-                        aabb_max = aabb_max.max(v);
+                        let mut aabb_min = Vec3::splat(f32::INFINITY);
+                        let mut aabb_max = Vec3::splat(f32::NEG_INFINITY);
+                        for p in &mesh.positions {
+                            let v = Vec3::from_array(*p);
+                            aabb_min = aabb_min.min(v);
+                            aabb_max = aabb_max.max(v);
+                        }
+
+                        let mut node = crate::scene::node::SceneNode::new(
+                            feature.id.clone(),
+                            feature.name.clone(),
+                            feat_layer.id.clone(),
+                            Some(feature.id.clone()),
+                            0,
+                            aabb_min,
+                            aabb_max,
+                        );
+                        node.is_visible = feat_layer.visible;
+                        node.shadow_color = feature.shadow_color;
+                        self.scene.nodes.push(node);
                     }
-
-                    let mut node = crate::scene::node::SceneNode::new(
-                        feature.id.clone(),
-                        feature.name.clone(),
-                        layer.id.clone(),
-                        Some(feature.id.clone()),
-                        0,
-                        aabb_min,
-                        aabb_max,
-                    );
-                    node.is_visible = layer.visible;
-                    node.shadow_color = feature.shadow_color;
-                    self.scene.nodes.push(node);
                 }
             }
         }
@@ -992,61 +1315,63 @@ impl MapEngine {
             renderer.clear_custom_shadow_colors();
 
             for layer in &self.layers {
-                if !layer.visible {
+                if !layer.visible() {
                     continue;
                 }
-                let mut raw_meshes_casters = Vec::new();
-                let mut raw_meshes_ground = Vec::new();
+                if let Some(feat_layer) = layer.as_any().downcast_ref::<FeatureLayer>() {
+                    let mut raw_meshes_casters = Vec::new();
+                    let mut raw_meshes_ground = Vec::new();
 
-                for feature in &layer.features {
-                    if let Some(mesh) = &feature.mesh {
-                        let mut aabb_min = Vec3::splat(f32::INFINITY);
-                        let mut aabb_max = Vec3::splat(f32::NEG_INFINITY);
-                        for p in &mesh.positions {
-                            let v = Vec3::from_array(*p);
-                            aabb_min = aabb_min.min(v);
-                            aabb_max = aabb_max.max(v);
-                        }
-                        let mut feat_tint = layer.color_tint;
-                        if let Some(c) = feature.color {
-                            feat_tint = c;
-                        }
-                        feat_tint[3] *= layer.opacity;
-                        let is_edge_enabled = layer.edge_enabled && feature.edge_enabled;
-                        let is_flat = feature.height <= 0.25;
+                    for feature in &feat_layer.features {
+                        if let Some(mesh) = &feature.mesh {
+                            let mut aabb_min = Vec3::splat(f32::INFINITY);
+                            let mut aabb_max = Vec3::splat(f32::NEG_INFINITY);
+                            for p in &mesh.positions {
+                                let v = Vec3::from_array(*p);
+                                aabb_min = aabb_min.min(v);
+                                aabb_max = aabb_max.max(v);
+                            }
+                            let mut feat_tint = feat_layer.color_tint;
+                            if let Some(c) = feature.color {
+                                feat_tint = c;
+                            }
+                            feat_tint[3] *= feat_layer.opacity;
+                            let is_edge_enabled = feat_layer.edge_enabled && feature.edge_enabled;
+                            let is_flat = feature.height <= 0.25;
 
-                        if is_flat {
-                            raw_meshes_ground.push((mesh, feat_tint, is_edge_enabled, aabb_min, aabb_max));
-                        } else {
-                            raw_meshes_casters.push((mesh, feat_tint, is_edge_enabled, aabb_min, aabb_max));
+                            if is_flat {
+                                raw_meshes_ground.push((mesh, feat_tint, is_edge_enabled, aabb_min, aabb_max));
+                            } else {
+                                raw_meshes_casters.push((mesh, feat_tint, is_edge_enabled, aabb_min, aabb_max));
+                            }
                         }
                     }
-                }
 
-                let chunk_size = 10000;
-                let should_cast = layer.cast_shadows;
-                for chunk in raw_meshes_casters.chunks(chunk_size) {
-                    let mut chunk_min = Vec3::splat(f32::INFINITY);
-                    let mut chunk_max = Vec3::splat(f32::NEG_INFINITY);
-                    let mut chunk_items = Vec::with_capacity(chunk.len());
-                    for (m, col, edge_en, aabb_m1, aabb_m2) in chunk {
-                        chunk_min = chunk_min.min(*aabb_m1);
-                        chunk_max = chunk_max.max(*aabb_m2);
-                        chunk_items.push((*m, *col, *edge_en));
+                    let chunk_size = 10000;
+                    let should_cast = feat_layer.cast_shadows;
+                    for chunk in raw_meshes_casters.chunks(chunk_size) {
+                        let mut chunk_min = Vec3::splat(f32::INFINITY);
+                        let mut chunk_max = Vec3::splat(f32::NEG_INFINITY);
+                        let mut chunk_items = Vec::with_capacity(chunk.len());
+                        for (m, col, edge_en, aabb_m1, aabb_m2) in chunk {
+                            chunk_min = chunk_min.min(*aabb_m1);
+                            chunk_max = chunk_max.max(*aabb_m2);
+                            chunk_items.push((*m, *col, *edge_en));
+                        }
+                        renderer.load_batched_chunk(&chunk_items, feat_layer.shadow_color, should_cast, chunk_min, chunk_max);
                     }
-                    renderer.load_batched_chunk(&chunk_items, layer.shadow_color, should_cast, chunk_min, chunk_max);
-                }
 
-                for chunk in raw_meshes_ground.chunks(chunk_size) {
-                    let mut chunk_min = Vec3::splat(f32::INFINITY);
-                    let mut chunk_max = Vec3::splat(f32::NEG_INFINITY);
-                    let mut chunk_items = Vec::with_capacity(chunk.len());
-                    for (m, col, edge_en, aabb_m1, aabb_m2) in chunk {
-                        chunk_min = chunk_min.min(*aabb_m1);
-                        chunk_max = chunk_max.max(*aabb_m2);
-                        chunk_items.push((*m, *col, *edge_en));
+                    for chunk in raw_meshes_ground.chunks(chunk_size) {
+                        let mut chunk_min = Vec3::splat(f32::INFINITY);
+                        let mut chunk_max = Vec3::splat(f32::NEG_INFINITY);
+                        let mut chunk_items = Vec::with_capacity(chunk.len());
+                        for (m, col, edge_en, aabb_m1, aabb_m2) in chunk {
+                            chunk_min = chunk_min.min(*aabb_m1);
+                            chunk_max = chunk_max.max(*aabb_m2);
+                            chunk_items.push((*m, *col, *edge_en));
+                        }
+                        renderer.load_batched_chunk(&chunk_items, feat_layer.shadow_color, false, chunk_min, chunk_max);
                     }
-                    renderer.load_batched_chunk(&chunk_items, layer.shadow_color, false, chunk_min, chunk_max);
                 }
             }
         }
@@ -1083,27 +1408,29 @@ impl MapEngine {
         // 1. Building mesh collider hit
         let p0 = ray.origin;
         let p1 = ray.origin + ray.direction * 50_000.0;
-        let mesh_hit = self.collider.cast_ray_segment(p0, p1).map(|(_, pt, _)| pt);
+        let mesh_hit: Option<Vec3> = self.collider.cast_ray_segment(p0, p1).map(|(_, pt, _)| pt);
 
         // 2. Terrain or ground hit
-        let ground_hit = if self.terrain.is_enabled {
+        let ground_hit: Option<Vec3> = if self.terrain.is_enabled {
             let origin = self.scene.origin;
             let terrain = &self.terrain;
-            ray.intersect_terrain_bisection(|x, z| {
+            ray.intersect_terrain_bisection(|x: f32, z: f32| -> f32 {
                 let geo = origin.local_to_geo(Vec3::new(x, 0.0, z));
                 let geodetic_elev = terrain
                     .sample_elevation(geo.latitude, geo.longitude)
                     .unwrap_or(origin.origin.elevation as f32) as f64;
                 let local_surface = origin.lat_lon_to_local(geo.latitude, geo.longitude, geodetic_elev);
                 local_surface.y
-            }, -2000.0)
+            }, -2000.0f32)
         } else {
-            ray.intersect_ground_plane(0.0)
+            ray.intersect_ground_plane(0.0f32)
         };
 
         match (mesh_hit, ground_hit) {
             (Some(m), Some(g)) => {
-                if (m - ray.origin).length_squared() < (g - ray.origin).length_squared() {
+                let d_m = (m - ray.origin).length_squared();
+                let d_g = (g - ray.origin).length_squared();
+                if d_m < d_g {
                     Some(m)
                 } else {
                     Some(g)
@@ -1121,11 +1448,13 @@ impl MapEngine {
         let p1 = ray.origin + ray.direction * 50_000.0;
         let (_dist, hit_pt, feat_id) = self.collider.cast_ray_segment(p0, p1)?;
         for layer in &self.layers {
-            if !layer.visible {
+            if !layer.visible() {
                 continue;
             }
-            if let Some(feat) = layer.features.iter().find(|f| f.id == feat_id) {
-                return Some((feat.clone(), hit_pt));
+            if let Some(feat_layer) = layer.as_any().downcast_ref::<FeatureLayer>() {
+                if let Some(feat) = feat_layer.features.iter().find(|f| f.id == feat_id) {
+                    return Some((feat.clone(), hit_pt));
+                }
             }
         }
         None
@@ -1148,5 +1477,345 @@ impl MapEngine {
 
     pub fn poll_events(&mut self) -> Vec<MapEvent> {
         std::mem::take(&mut self.events)
+    }
+}
+
+/// Target destination for camera navigation (`map.goto`).
+///
+/// Accepts `[longitude, latitude]` arrays or tuples matching GIS standards
+/// (GeoJSON RFC 7946, Esri `view.goTo([lon, lat])`), explicit `GeoCoord`,
+/// Target destination for camera navigation (`map.goto`).
+///
+/// Accepts `[longitude, latitude]` (2 elements) or `[longitude, latitude, elevation]` (3 elements),
+/// `(longitude, latitude)` / `(longitude, latitude, elevation)` tuples, explicit `GeoCoord`,
+/// local 3D Cartesian coordinates (`Vec3`, `[x, y, z]`), or `()` to preserve the current target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GoToTarget {
+    /// Preserves the current camera target focus point.
+    Current,
+    /// Geographic coordinate: `longitude` and `latitude` in decimal degrees, optional `elevation` in meters.
+    Geo {
+        longitude: f64,
+        latitude: f64,
+        elevation: Option<f64>,
+    },
+    /// Local 3D Cartesian coordinates in meters (Planar ENU mode only).
+    Local(Vec3),
+}
+
+impl GoToTarget {
+    /// Creates a geographic target from longitude and latitude in degrees.
+    #[inline]
+    pub fn lon_lat(longitude: f64, latitude: f64) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: None,
+        }
+    }
+
+    /// Creates a geographic target from longitude, latitude, and elevation in meters.
+    #[inline]
+    pub fn lon_lat_elev(longitude: f64, latitude: f64, elevation: f64) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: Some(elevation),
+        }
+    }
+
+    /// Creates a geographic target from latitude and longitude in degrees.
+    #[inline]
+    pub fn lat_lon(latitude: f64, longitude: f64) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: None,
+        }
+    }
+
+    /// Creates a geographic target from a `GeoCoord`.
+    #[inline]
+    pub fn from_geo(geo: GeoCoord) -> Self {
+        Self::Geo {
+            longitude: geo.longitude,
+            latitude: geo.latitude,
+            elevation: Some(geo.elevation),
+        }
+    }
+
+    /// Creates a local 3D target point for Planar mode.
+    #[inline]
+    pub fn local(point: Vec3) -> Self {
+        Self::Local(point)
+    }
+}
+
+impl From<()> for GoToTarget {
+    /// Preserves current target position.
+    #[inline]
+    fn from(_: ()) -> Self {
+        Self::Current
+    }
+}
+
+impl From<[f64; 2]> for GoToTarget {
+    /// Converts `[longitude, latitude]` array into a `GoToTarget`.
+    #[inline]
+    fn from([longitude, latitude]: [f64; 2]) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: None,
+        }
+    }
+}
+
+impl From<[f32; 2]> for GoToTarget {
+    /// Converts `[longitude, latitude]` array into a `GoToTarget`.
+    #[inline]
+    fn from([longitude, latitude]: [f32; 2]) -> Self {
+        Self::Geo {
+            longitude: longitude as f64,
+            latitude: latitude as f64,
+            elevation: None,
+        }
+    }
+}
+
+impl From<(f64, f64)> for GoToTarget {
+    /// Converts `(longitude, latitude)` tuple into a `GoToTarget`.
+    #[inline]
+    fn from((longitude, latitude): (f64, f64)) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: None,
+        }
+    }
+}
+
+impl From<[f64; 3]> for GoToTarget {
+    /// Converts `[longitude, latitude, elevation]` array into a geographic `GoToTarget`.
+    #[inline]
+    fn from([longitude, latitude, elevation]: [f64; 3]) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: Some(elevation),
+        }
+    }
+}
+
+impl From<(f64, f64, f64)> for GoToTarget {
+    /// Converts `(longitude, latitude, elevation)` tuple into a geographic `GoToTarget`.
+    #[inline]
+    fn from((longitude, latitude, elevation): (f64, f64, f64)) -> Self {
+        Self::Geo {
+            longitude,
+            latitude,
+            elevation: Some(elevation),
+        }
+    }
+}
+
+impl From<GeoCoord> for GoToTarget {
+    #[inline]
+    fn from(geo: GeoCoord) -> Self {
+        Self::Geo {
+            longitude: geo.longitude,
+            latitude: geo.latitude,
+            elevation: Some(geo.elevation),
+        }
+    }
+}
+
+impl From<&GeoCoord> for GoToTarget {
+    #[inline]
+    fn from(geo: &GeoCoord) -> Self {
+        Self::Geo {
+            longitude: geo.longitude,
+            latitude: geo.latitude,
+            elevation: Some(geo.elevation),
+        }
+    }
+}
+
+impl From<Vec3> for GoToTarget {
+    #[inline]
+    fn from(pt: Vec3) -> Self {
+        Self::Local(pt)
+    }
+}
+
+impl From<[f32; 3]> for GoToTarget {
+    /// Converts `[x, y, z]` local coordinate array into a `GoToTarget`.
+    #[inline]
+    fn from([x, y, z]: [f32; 3]) -> Self {
+        Self::Local(Vec3::new(x, y, z))
+    }
+}
+
+/// Camera options for `map.goto(target, options)`.
+///
+/// Any option left as `None` preserves the camera's current value without modification.
+/// For Globe mode, `heading` and `tilt` are ignored, and camera orientation is uniquely
+/// calculated to center directly nadir over the target coordinate on the Earth sphere.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GoToOptions {
+    /// Viewing distance in meters.
+    /// In Planar mode: viewing distance from target ground point to camera eye.
+    /// In Globe mode: distance from Earth center to camera eye (e.g. 18_000_000.0).
+    /// If None: current camera distance is preserved.
+    pub distance: Option<f32>,
+
+    /// Compass heading in degrees (0.0 = North, 90.0 = East, 180.0 = South, 270.0 = West).
+    /// Ignored in Globe mode.
+    /// If None: current heading/yaw is preserved.
+    pub heading: Option<f32>,
+
+    /// Tilt angle in degrees (0.0 = top-down 2D nadir view, 45.0 = 3D oblique perspective, 85.0 = near horizon).
+    /// Ignored in Globe mode.
+    /// If None: current tilt/pitch is preserved.
+    pub tilt: Option<f32>,
+
+    /// Whether to animate the camera smoothly to the destination.
+    /// Defaults to `true`. When set to `false`, the camera immediately snaps/teleports.
+    pub animate: Option<bool>,
+}
+
+impl GoToOptions {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates options specifying only viewing distance in meters.
+    #[inline]
+    pub fn distance(distance: f32) -> Self {
+        Self {
+            distance: Some(distance),
+            heading: None,
+            tilt: None,
+            animate: None,
+        }
+    }
+
+    /// Creates options for instant teleportation (no animation).
+    #[inline]
+    pub fn immediate() -> Self {
+        Self {
+            distance: None,
+            heading: None,
+            tilt: None,
+            animate: Some(false),
+        }
+    }
+
+    /// Creates options for smoothly animated transition.
+    #[inline]
+    pub fn animated() -> Self {
+        Self {
+            distance: None,
+            heading: None,
+            tilt: None,
+            animate: Some(true),
+        }
+    }
+
+    /// Sets viewing distance in meters.
+    #[inline]
+    pub fn with_distance(mut self, distance: f32) -> Self {
+        self.distance = Some(distance);
+        self
+    }
+
+    /// Sets compass heading in degrees (0° = North, 90° = East). Ignored in Globe mode.
+    #[inline]
+    pub fn with_heading(mut self, heading: f32) -> Self {
+        self.heading = Some(heading);
+        self
+    }
+
+    /// Sets tilt angle in degrees (0° = nadir top-down, 45° = oblique, 85° = horizon). Ignored in Globe mode.
+    #[inline]
+    pub fn with_tilt(mut self, tilt: f32) -> Self {
+        self.tilt = Some(tilt);
+        self
+    }
+
+    /// Sets pitch angle in degrees (90° = nadir top-down, 0° = horizon).
+    #[inline]
+    pub fn with_pitch(mut self, pitch: f32) -> Self {
+        self.tilt = Some((90.0 - pitch).clamp(0.0, 90.0));
+        self
+    }
+
+    /// Sets whether the transition should be smoothly animated (default: true).
+    /// Set to `false` for instant teleportation without animation.
+    #[inline]
+    pub fn with_animate(mut self, animate: bool) -> Self {
+        self.animate = Some(animate);
+        self
+    }
+
+    /// Returns whether animation is enabled (defaults to true if None).
+    #[inline]
+    pub fn is_animated(&self) -> bool {
+        self.animate.unwrap_or(true)
+    }
+}
+
+impl From<f32> for GoToOptions {
+    #[inline]
+    fn from(distance: f32) -> Self {
+        Self::distance(distance)
+    }
+}
+
+impl From<f64> for GoToOptions {
+    #[inline]
+    fn from(distance: f64) -> Self {
+        Self::distance(distance as f32)
+    }
+}
+
+/// Helper trait allowing `goto` to accept `None`, `GoToOptions`, `Option<GoToOptions>`, or numeric distances.
+pub trait IntoGoToOptions {
+    fn into_goto_options(self) -> Option<GoToOptions>;
+}
+
+impl IntoGoToOptions for Option<GoToOptions> {
+    #[inline]
+    fn into_goto_options(self) -> Option<GoToOptions> {
+        self
+    }
+}
+
+impl IntoGoToOptions for GoToOptions {
+    #[inline]
+    fn into_goto_options(self) -> Option<GoToOptions> {
+        Some(self)
+    }
+}
+
+impl IntoGoToOptions for f32 {
+    #[inline]
+    fn into_goto_options(self) -> Option<GoToOptions> {
+        Some(GoToOptions::distance(self))
+    }
+}
+
+impl IntoGoToOptions for f64 {
+    #[inline]
+    fn into_goto_options(self) -> Option<GoToOptions> {
+        Some(GoToOptions::distance(self as f32))
+    }
+}
+
+impl IntoGoToOptions for () {
+    #[inline]
+    fn into_goto_options(self) -> Option<GoToOptions> {
+        None
     }
 }

@@ -98,6 +98,18 @@ impl I3SGeometryDecoder {
         let mut face_ranges = Vec::with_capacity(feature_count);
 
         if feature_count > 0 && byte_cursor < buffer.len() {
+            // In I3S specification, per-feature attributes (featureId and faceRange)
+            // reside at the tail of the geometry buffer. If there are optional vertex
+            // attributes between colors and features (such as uvRegion in textured layers),
+            // align cursor to the feature table start.
+            let feat_bytes_64 = feature_count * 16;
+            let feat_bytes_32 = feature_count * 12;
+            if buffer.len() >= feat_bytes_64 && buffer.len() - feat_bytes_64 >= byte_cursor {
+                byte_cursor = buffer.len() - feat_bytes_64;
+            } else if buffer.len() >= feat_bytes_32 && buffer.len() - feat_bytes_32 >= byte_cursor {
+                byte_cursor = buffer.len() - feat_bytes_32;
+            }
+
             let remaining_bytes = buffer.len() - byte_cursor;
             // Case A: UInt64 featureId (8 bytes each) + UInt32 faceRange (8 bytes pair each) = 16 bytes per feature
             if remaining_bytes >= feature_count * 16 {
@@ -215,9 +227,9 @@ impl I3SGeometryDecoder {
             for i in 0..feature_ids.len() {
                 let fid = feature_ids[i];
                 let (start_face, end_face) = face_ranges[i];
-                let max_v = positions.len();
-                let start_v = (start_face as usize * 3).min(max_v);
-                let end_v = (end_face as usize * 3 + 3).min(max_v);
+                let max_v = positions.len() as u64;
+                let start_v = ((start_face as u64) * 3).min(max_v) as usize;
+                let end_v = ((end_face as u64) * 3 + 3).min(max_v) as usize;
 
                 if start_v < end_v {
                     let feat_positions = positions[start_v..end_v].to_vec();

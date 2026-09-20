@@ -217,7 +217,18 @@ impl I3SOrientedBoundingBox {
     /// Converts OBB parameters to Local Engine Cartesian Space (+X=East, +Y=Up, -Z=North).
     /// Returns `(center_engine, [axis_east, axis_up, axis_south], half_size)`.
     pub fn to_engine_obb(&self, origin: &ProjectOrigin) -> (Vec3, [Vec3; 3], Vec3) {
-        let center_enu = origin.geo_to_local(&GeoCoord::new(self.center[1], self.center[0], self.center[2]));
+        let (lat, lon) = if self.center[0].abs() > 180.0 || self.center[1].abs() > 90.0 {
+            // Web Mercator (EPSG:3857) meters -> WGS84 degrees
+            let mx = self.center[0];
+            let my = self.center[1];
+            let lon = (mx / 6378137.0).to_degrees();
+            let lat = (2.0 * (my / 6378137.0).exp().atan() - std::f64::consts::FRAC_PI_2).to_degrees();
+            (lat, lon)
+        } else {
+            (self.center[1], self.center[0])
+        };
+
+        let center_enu = origin.geo_to_local(&GeoCoord::new(lat, lon, self.center[2]));
         let half_size = Vec3::new(
             self.half_size[0] as f32,
             self.half_size[2] as f32, // Z in I3S is elevation/height -> Engine Y (Up)
@@ -293,10 +304,13 @@ pub struct I3SNodePage {
 // I3S Preset Service URLs
 // ----------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct I3SPreset {
     pub name: &'static str,
     pub url: &'static str,
+    pub longitude: f64,
+    pub latitude: f64,
+    pub camera_distance: f32,
     pub default_color: [u8; 4],
 }
 
@@ -304,27 +318,42 @@ pub const I3S_PRESETS: &[I3SPreset] = &[
     I3SPreset {
         name: "🏢 Melbourne CBD",
         url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AB_Melbourne_WM/SceneServer",
+        longitude: 144.9631,
+        latitude: -37.8136,
+        camera_distance: 1200.0,
         default_color: [240, 243, 246, 255],
     },
     I3SPreset {
-        name: "🏗 Arden St",
-        url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/ArdenSt_189_203_WSL1/SceneServer",
-        default_color: [255, 180, 100, 255],
-    },
-    I3SPreset {
-        name: "🏙 Melbourne POC",
-        url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/sceneViewerPoc_WSL1/SceneServer",
-        default_color: [180, 210, 240, 255],
-    },
-    I3SPreset {
-        name: "🏢 AQ North",
-        url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AQ_North/SceneServer",
-        default_color: [220, 230, 240, 255],
+        name: "🏛 Glen Eira Textured",
+        url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AB_Glen_Eira_Textured/SceneServer",
+        longitude: 145.0373,
+        latitude: -37.9027,
+        camera_distance: 1200.0,
+        default_color: [240, 240, 240, 255],
     },
     I3SPreset {
         name: "🏢 AQ East",
         url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AQ_East/SceneServer",
+        longitude: 144.8309,
+        latitude: -37.7763,
+        camera_distance: 800.0,
         default_color: [220, 240, 230, 255],
+    },
+    I3SPreset {
+        name: "🏗 Arden St",
+        url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/ArdenSt_189_203_WSL1/SceneServer",
+        longitude: 144.9413,
+        latitude: -37.8004,
+        camera_distance: 600.0,
+        default_color: [255, 180, 100, 255],
+    },
+    I3SPreset {
+        name: "🏢 AQ North",
+        url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AQ_North/SceneServer",
+        longitude: 144.8260,
+        latitude: -37.7749,
+        camera_distance: 800.0,
+        default_color: [220, 230, 240, 255],
     },
 ];
 

@@ -65,6 +65,12 @@ impl GeoCoord {
     }
 }
 
+impl Default for ProjectOrigin {
+    fn default() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
+}
+
 /// Project Coordinate Reference System with Local Project Origin
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ProjectOrigin {
@@ -165,6 +171,60 @@ impl ProjectOrigin {
 
         // Convert standard ECEF [x_std, y_std, z_std] to Engine ECEF [x_std, z_std, -y_std]
         ecef_to_geodetic_d64([x_std, z_std, -y_std])
+    }
+}
+
+impl From<[f64; 3]> for GeoCoord {
+    /// Converts `[x, y, z]` array (where x = longitude, y = latitude, z = elevation) into a `GeoCoord`.
+    #[inline]
+    fn from([x, y, z]: [f64; 3]) -> Self {
+        Self {
+            latitude: y,
+            longitude: x,
+            elevation: z,
+        }
+    }
+}
+
+impl From<[f64; 2]> for GeoCoord {
+    /// Converts `[x, y]` array (where x = longitude, y = latitude) into a `GeoCoord` at sea level (z = 0.0).
+    #[inline]
+    fn from([x, y]: [f64; 2]) -> Self {
+        Self {
+            latitude: y,
+            longitude: x,
+            elevation: 0.0,
+        }
+    }
+}
+
+impl From<[f64; 3]> for ProjectOrigin {
+    /// Converts `[x, y, z]` array (where x = longitude, y = latitude, z = elevation) into a `ProjectOrigin`.
+    #[inline]
+    fn from([x, y, z]: [f64; 3]) -> Self {
+        Self::new(y, x, z)
+    }
+}
+
+impl From<[f64; 2]> for ProjectOrigin {
+    /// Converts `[x, y]` array (where x = longitude, y = latitude) into a `ProjectOrigin` at sea level.
+    #[inline]
+    fn from([x, y]: [f64; 2]) -> Self {
+        Self::new(y, x, 0.0)
+    }
+}
+
+impl From<GeoCoord> for ProjectOrigin {
+    #[inline]
+    fn from(geo: GeoCoord) -> Self {
+        Self::from_geo(geo)
+    }
+}
+
+impl From<&GeoCoord> for ProjectOrigin {
+    #[inline]
+    fn from(geo: &GeoCoord) -> Self {
+        Self::from_geo(*geo)
     }
 }
 

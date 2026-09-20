@@ -41,7 +41,7 @@ pub struct I3SManager {
     // Threading
     work_queue: Arc<Mutex<I3SWorkQueue>>,
     work_condvar: Arc<Condvar>,
-    result_receiver: Receiver<I3SDownloadResult>,
+    result_receiver: Mutex<Receiver<I3SDownloadResult>>,
     result_sender: std::sync::mpsc::Sender<I3SDownloadResult>,
 
     pub active_nodes_count: usize,
@@ -95,7 +95,7 @@ impl I3SManager {
             origin: shared_origin.clone(),
             work_queue: work_queue.clone(),
             work_condvar: work_condvar.clone(),
-            result_receiver,
+            result_receiver: Mutex::new(result_receiver),
             result_sender: result_sender.clone(),
             active_nodes_count: 0,
             is_loading_metadata: false,
@@ -172,12 +172,13 @@ impl I3SManager {
 
                     let mut success = false;
                     if let Some(bytes) = bytes {
+                        let is_wgs84 = obb_center[0].abs() <= 180.0 && obb_center[1].abs() <= 90.0;
                         if let Ok(mut decoded) = I3SGeometryDecoder::decode(
                             &bytes,
                             &geom_info,
                             geom_buf_def.as_ref(),
                             obb_center,
-                            true, // vertexCRS is WGS84 degrees per layer metadata
+                            is_wgs84,
                             &origin,
                             base_color,
                         ) {
@@ -235,38 +236,60 @@ impl I3SManager {
         count
     }
 
+    /// Returns the current origin used by worker threads
+    pub fn origin(&self) -> Option<ProjectOrigin> {
+        self.origin.lock().ok().map(|o| *o)
+    }
+
     /// Update the scene origin used by all background worker threads for ENU decoding.
     /// Call this whenever the scene origin changes (e.g. when loading a new project).
     pub fn set_origin(&mut self, origin: ProjectOrigin) {
-        if let Ok(mut o) = self.origin.lock() {
-            *o = origin;
+        let changed = if let Ok(mut o) = self.origin.lock() {
+            if *o != origin {
+                *o = origin;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if changed {
+            self.clear_loaded_tiles();
         }
     }
 
-    /// Clear all streaming state (node cache, request tracking, GPU-upload queue).
-    /// Call this when switching service URLs or toggling the layer off/on to avoid
-    /// stale node IDs blocking new downloads.
-    pub fn clear_streaming_state(&mut self) {
-        self.node_cache.clear();
-        self.cached_pages.clear();
-        self.pending_pages.clear();
+    /// Clears only loaded tile meshes and pending geometry download tasks when origin shifts,
+    /// preserving layer metadata and nodepage hierarchy cache.
+    pub fn clear_loaded_tiles(&mut self) {
         self.requested_node_ids.clear();
         self.loaded_node_ids.clear();
         self.raw_meshes.clear();
         self.raw_features.clear();
-        self.layer_metadata = None;
-        self.is_loading_metadata = false;
         self.active_nodes_count = 0;
         self.nodes_to_request.clear();
 
-        // Also flush the pending work queue
         if let Ok(mut q) = self.work_queue.lock() {
             q.pending_geometries.clear();
             q.in_flight = 0;
         }
 
+        self.last_calc_instant = None;
+    }
+
+    /// Clear all streaming state (node cache, request tracking, GPU-upload queue).
+    /// Call this when toggling the layer off/on.
+    pub fn clear_streaming_state(&mut self) {
+        self.node_cache.clear();
+        self.cached_pages.clear();
+        self.pending_pages.clear();
+        self.clear_loaded_tiles();
+
         // Drain any stale results from the channel
-        while self.result_receiver.try_recv().is_ok() {}
+        if let Ok(rx) = self.result_receiver.lock() {
+            while rx.try_recv().is_ok() {}
+        }
     }
 
     /// Set service URL and trigger metadata loading
@@ -425,7 +448,7 @@ impl I3SManager {
         };
 
         if origin_changed {
-            self.clear_streaming_state();
+            self.clear_loaded_tiles();
             return Vec::new();
         }
 
@@ -714,12 +737,13 @@ impl I3SManager {
                         g.in_flight = g.in_flight.saturating_sub(1);
                     }
                     if let Ok(bytes) = res {
+                        let is_wgs84 = obb_center[0].abs() <= 180.0 && obb_center[1].abs() <= 90.0;
                         match I3SGeometryDecoder::decode(
                             &bytes,
                             &geom_info,
                             geom_buf_def.as_ref(),
                             obb_center,
-                            true,
+                            is_wgs84,
                             &origin_val,
                             base_color,
                         ) {
@@ -742,8 +766,15 @@ impl I3SManager {
     /// Drains completed decoded meshes and metadata updates from background threads
     pub fn drain_completed(&mut self) -> Vec<DecodedI3SNode> {
         let mut completed_geometries = Vec::new();
+        let mut incoming = Vec::new();
 
-        while let Ok(res) = self.result_receiver.try_recv() {
+        if let Ok(rx) = self.result_receiver.lock() {
+            while let Ok(res) = rx.try_recv() {
+                incoming.push(res);
+            }
+        }
+
+        for res in incoming {
             match res {
                 I3SDownloadResult::Metadata(layer) => {
                     self.is_loading_metadata = false;
@@ -752,6 +783,7 @@ impl I3SManager {
                     self.layer_metadata = Some(*layer);
                     // Automatically trigger root node page 0 fetch
                     self.fetch_node_page(0);
+                    self.last_calc_instant = None;
                 }
                 I3SDownloadResult::NodePage(page_id, page) => {
                     self.pending_pages.remove(&page_id);
@@ -779,6 +811,7 @@ impl I3SManager {
                         }
                         self.node_cache.insert(node.index, node);
                     }
+                    self.last_calc_instant = None;
                 }
                 I3SDownloadResult::PageFailure(page_id, _) => {
                     self.pending_pages.remove(&page_id);

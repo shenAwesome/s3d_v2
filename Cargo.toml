@@ -49,7 +49,7 @@ lerc-rs = "0.5"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 
 # Desktop-specific
-ureq = { version = "2.10", features = ["tls"] }
+ureq = { version = "2.10", features = ["tls", "gzip"] }
 rayon = "1.10"
 rfd = "0.15"
 
