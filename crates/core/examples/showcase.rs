@@ -79,7 +79,7 @@ fn get_initial_example_id() -> Option<String> {
 // ============================================================================
 
 pub struct ShowcaseApp {
-    map: MapEngine,
+    engine: MapEngine,
     demos: Vec<DemoEntry>,
     active_idx: usize,
     code_text: String,
@@ -91,10 +91,10 @@ impl ShowcaseApp {
         cc.egui_ctx.set_theme(egui::Theme::Dark);
 
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        let mut map = MapEngine::new(ProjectOrigin::from_geo(melbourne));
+        let mut engine = MapEngine::new(ProjectOrigin::from_geo(melbourne));
 
         // Default camera
-        map.goto(
+        engine.goto(
             glam::Vec3::ZERO,
             GoToOptions::immediate()
                 .with_distance(1800.0)
@@ -109,7 +109,7 @@ impl ShowcaseApp {
                 render_state.queue.clone().into(),
                 render_state,
             );
-            map.set_renderer(renderer);
+            engine.set_renderer(renderer);
         }
 
         let demos = demos::all_demos();
@@ -127,14 +127,14 @@ impl ShowcaseApp {
         let code_text = demos[initial_idx].source.to_string();
 
         let mut app = Self {
-            map,
+            engine,
             demos,
             active_idx: initial_idx,
             code_text,
             last_copied_at: None,
         };
 
-        app.demos[initial_idx].demo.setup(&mut app.map);
+        app.demos[initial_idx].demo.setup(&mut app.engine);
 
         #[cfg(target_arch = "wasm32")]
         sync_url_hash(&app.demos, app.active_idx);
@@ -148,16 +148,16 @@ impl ShowcaseApp {
         self.code_text = self.demos[idx].source.to_string();
 
         // Reset map state before activating new demo
-        self.map.clear_layers();
-        self.map.terrain.is_enabled = false;
-        self.map.selected_feature = None;
-        if let Some(r) = &mut self.map.renderer {
+        self.engine.clear_layers();
+        self.engine.terrain.is_enabled = false;
+        self.engine.selected_feature = None;
+        if let Some(r) = &mut self.engine.renderer {
             r.set_selected_mesh(None);
             r.edge_renderer.config.enabled = false;
         }
-        self.map.align_north();
+        self.engine.align_north();
 
-        self.demos[idx].demo.setup(&mut self.map);
+        self.demos[idx].demo.setup(&mut self.engine);
 
         #[cfg(target_arch = "wasm32")]
         sync_url_hash(&self.demos, idx);
@@ -167,7 +167,7 @@ impl ShowcaseApp {
 impl eframe::App for ShowcaseApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
-        self.map.update(dt);
+        self.engine.update(dt);
 
         // WASM: sync example from URL hash changes
         #[cfg(target_arch = "wasm32")]
@@ -182,10 +182,10 @@ impl eframe::App for ShowcaseApp {
         }
 
         // Request repaint when streaming or animating
-        if self.map.camera.is_animating()
-            || self.map.has_new_gpu_tiles
-            || self.map.basemap.has_unconsumed_completed()
-            || self.map.is_streaming()
+        if self.engine.camera.is_animating()
+            || self.engine.has_new_gpu_tiles
+            || self.engine.basemap.has_unconsumed_completed()
+            || self.engine.is_streaming()
         {
             ctx.request_repaint();
         }
@@ -219,7 +219,7 @@ impl eframe::App for ShowcaseApp {
                     ui.separator();
 
                     // Delegate demo-specific controls to the active demo
-                    if self.demos[self.active_idx].demo.controls(ui, &mut self.map) {
+                    if self.demos[self.active_idx].demo.controls(ui, &mut self.engine) {
                         ctx.request_repaint();
                     }
                 });
@@ -290,10 +290,10 @@ impl eframe::App for ShowcaseApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(10, 12, 16)))
             .show(ctx, |ui| {
-                let response = MapWidget::new(&mut self.map).show(ui);
+                let response = MapWidget::new(&mut self.engine).show(ui);
 
                 // Delegate click/pick handling to the active demo
-                self.demos[self.active_idx].demo.on_map_response(&response, &mut self.map);
+                self.demos[self.active_idx].demo.on_map_response(&response, &mut self.engine);
             });
     }
 }

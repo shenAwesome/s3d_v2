@@ -27,18 +27,18 @@ impl Demo for GeoJsonBuildingsDemo {
         "Parsing GeoJSON building footprints, 2.5D triangulation, and 3D height extrusion."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(ProjectOrigin::from_geo(melbourne));
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(ProjectOrigin::from_geo(melbourne));
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // Parse GeoJSON and create 3D extruded building layer
         let geojson = include_str!("../../assets/sample_buildings.geojson");
         if let Ok(dataset) = s3d_core::gis::geojson_loader::parse_geojson(
             geojson,
-            Some(map.scene.origin),
+            Some(engine.scene.origin),
         ) {
             let mut layer = s3d_core::gis::layer::FeatureLayer::new(
                 "melbourne_buildings",
@@ -47,12 +47,12 @@ impl Demo for GeoJsonBuildingsDemo {
                 [0.85, 0.88, 0.92, 1.0],
             );
             layer.features = dataset.features;
-            map.add_layer(layer);
+            engine.add_layer(layer);
         }
 
         self.inspected_building = None;
 
-        map.goto(
+        engine.goto(
             [144.9631, -37.8136],
             s3d_core::engine::map_engine::GoToOptions::immediate()
                 .with_distance(1800.0)
@@ -61,7 +61,7 @@ impl Demo for GeoJsonBuildingsDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, _map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, _engine: &mut MapEngine) -> bool {
         // Show selected building name, if any
         if let Some(name) = &self.inspected_building {
             ui.label(
@@ -79,23 +79,23 @@ impl Demo for GeoJsonBuildingsDemo {
         false
     }
 
-    fn on_map_response(&mut self, response: &MapResponse, map: &mut MapEngine) {
+    fn on_map_response(&mut self, response: &MapResponse, engine: &mut MapEngine) {
         // Raycast click to pick building features
         if response.response.clicked() {
             if let Some(mouse_pos) = response.response.interact_pointer_pos() {
                 let rect = response.response.rect;
-                let ray = map.screen_to_ray(
+                let ray = engine.screen_to_ray(
                     mouse_pos.x - rect.min.x,
                     mouse_pos.y - rect.min.y,
                     rect.width(),
                     rect.height(),
                 );
-                if let Some((feat, _)) = map.pick_feature(&ray) {
+                if let Some((feat, _)) = engine.pick_feature(&ray) {
                     self.inspected_building = Some(feat.name.clone());
-                    map.select_feature(Some(feat));
+                    engine.select_feature(Some(feat));
                 } else {
                     self.inspected_building = None;
-                    map.select_feature(None);
+                    engine.select_feature(None);
                 }
             }
         }

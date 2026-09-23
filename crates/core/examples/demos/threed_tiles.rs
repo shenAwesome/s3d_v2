@@ -53,22 +53,22 @@ impl Demo for ThreeDTilesDemo {
         "Stream city-scale 3D Tilesets (b3dm) with HLOD traversal and screen-space error selection."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let (name, lat, lon, url, dist, pitch_deg) = PRESETS[self.selected_preset];
         let origin = GeoCoord::new(lat, lon, 0.0);
-        map.set_origin(origin);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(origin);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // 1. Configure and activate OGC 3D Tileset streaming
         let mut layer = IntegratedMeshLayer::new("threedtiles_layer", name, url);
         layer.manager.maximum_screen_space_error = self.max_sse;
         layer.manager.height_offset = self.height_offset;
-        map.add_layer(layer);
+        engine.add_layer(layer);
 
         // 2. Position camera overlooking the 3D tileset
-        map.goto(
+        engine.goto(
             glam::Vec3::new(0.0, 50.0, 0.0),
             GoToOptions::immediate()
                 .with_distance(dist)
@@ -77,7 +77,7 @@ impl Demo for ThreeDTilesDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
 
         // Preset selector
@@ -87,13 +87,13 @@ impl Demo for ThreeDTilesDemo {
                 self.selected_preset = i;
                 let (_, lat, lon, url, dist, pitch_deg) = PRESETS[i];
                 let origin = GeoCoord::new(lat, lon, 0.0);
-                map.set_origin(origin);
-                map.remove_layer("threedtiles_layer");
+                engine.set_origin(origin);
+                engine.remove_layer("threedtiles_layer");
                 let mut layer = IntegratedMeshLayer::new("threedtiles_layer", *name, url);
                 layer.manager.maximum_screen_space_error = self.max_sse;
                 layer.manager.height_offset = self.height_offset;
-                map.add_layer(layer);
-                map.goto(
+                engine.add_layer(layer);
+                engine.goto(
                     glam::Vec3::ZERO,
                     GoToOptions::immediate()
                         .with_distance(dist)
@@ -109,7 +109,7 @@ impl Demo for ThreeDTilesDemo {
         // Maximum Screen-Space Error (LOD refinement threshold)
         ui.label("Max SSE:");
         if ui.add(egui::Slider::new(&mut self.max_sse, 4.0..=64.0).step_by(2.0)).changed() {
-            if let Some(layer) = map.get_layer_mut::<IntegratedMeshLayer>("threedtiles_layer") {
+            if let Some(layer) = engine.get_layer_mut::<IntegratedMeshLayer>("threedtiles_layer") {
                 layer.manager.maximum_screen_space_error = self.max_sse;
             }
             changed = true;
@@ -120,7 +120,7 @@ impl Demo for ThreeDTilesDemo {
         // Vertical height offset slider
         ui.label("Height Offset:");
         if ui.add(egui::Slider::new(&mut self.height_offset, -50.0..=50.0).suffix("m").step_by(1.0)).changed() {
-            if let Some(layer) = map.get_layer_mut::<IntegratedMeshLayer>("threedtiles_layer") {
+            if let Some(layer) = engine.get_layer_mut::<IntegratedMeshLayer>("threedtiles_layer") {
                 layer.manager.height_offset = self.height_offset;
                 layer.manager.set_height_offset(self.height_offset);
             }
@@ -130,7 +130,7 @@ impl Demo for ThreeDTilesDemo {
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

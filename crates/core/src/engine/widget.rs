@@ -19,22 +19,36 @@ pub struct MapResponse {
 #[cfg(feature = "egui")]
 /// Standalone, reusable Map Widget for egui
 pub struct MapWidget<'a> {
-    map: &'a mut MapEngine,
+    engine: &'a mut MapEngine,
 }
 
 #[cfg(feature = "egui")]
 impl<'a> MapWidget<'a> {
-    pub fn new(map: &'a mut MapEngine) -> Self {
-        Self { map }
+    pub fn new(engine: &'a mut MapEngine) -> Self {
+        Self { engine }
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> MapResponse {
-        self.map.show_ui(ui)
+        self.engine.show_ui(ui)
+    }
+}
+
+#[cfg(feature = "egui")]
+impl<'a> egui::Widget for MapWidget<'a> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        self.engine.show_ui(ui).response
     }
 }
 
 #[cfg(feature = "egui")]
 impl MapEngine {
+    /// Convenient shorthand to render the map directly into an egui container.
+    ///
+    /// Shorthand for `MapWidget::new(&mut map).show(ui)`.
+    pub fn show(&mut self, ui: &mut egui::Ui) -> MapResponse {
+        self.show_ui(ui)
+    }
+
     /// Renders the MapEngine canvas widget inside the given egui::Ui container.
     pub fn show_ui(&mut self, ui: &mut egui::Ui) -> MapResponse {
         let available_size = ui.available_size();

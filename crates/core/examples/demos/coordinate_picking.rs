@@ -28,19 +28,19 @@ impl Demo for CoordinatePickingDemo {
         "Raycasting screen cursor position to geographic WGS84 coordinates on click."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(melbourne);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(melbourne);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         self.picked_geo = None;
 
-        map.goto([144.9631, -37.8136], GoToOptions::immediate().with_distance(2500.0).with_tilt(45.0));
+        engine.goto([144.9631, -37.8136], GoToOptions::immediate().with_distance(2500.0).with_tilt(45.0));
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, _map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, _engine: &mut MapEngine) -> bool {
         // Display picked coordinates, or prompt to click
         if let Some(geo) = self.picked_geo {
             ui.label(
@@ -58,13 +58,13 @@ impl Demo for CoordinatePickingDemo {
         false
     }
 
-    fn on_map_response(&mut self, response: &MapResponse, map: &mut MapEngine) {
+    fn on_map_response(&mut self, response: &MapResponse, engine: &mut MapEngine) {
         // Convert clicked world point to WGS84 geographic coordinates
         if let Some(world_pt) = response.clicked_world_point {
-            self.picked_geo = if map.projection_mode == ProjectionMode::GlobeECEF {
+            self.picked_geo = if engine.projection_mode == ProjectionMode::GlobeECEF {
                 Some(s3d_core::gis::crs::ecef_to_geodetic(world_pt))
             } else {
-                Some(map.scene.origin.local_to_geo(world_pt))
+                Some(engine.scene.origin.local_to_geo(world_pt))
             };
         }
     }

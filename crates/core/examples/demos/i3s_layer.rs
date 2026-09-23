@@ -34,13 +34,13 @@ impl Demo for I3SLayerDemo {
         "Stream Indexed 3D Scene Layers (I3S) with nodepage index trees and binary vertex buffers."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let preset = &I3S_PRESETS[self.selected_preset];
         let origin = GeoCoord::new(preset.latitude, preset.longitude, 0.0);
-        map.set_origin(origin);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(origin);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // 1. Configure and activate Esri I3S SceneLayer streaming
         let scene_layer = SceneLayer::new(
@@ -48,10 +48,10 @@ impl Demo for I3SLayerDemo {
             preset.name,
             preset.url,
         );
-        map.add_layer(scene_layer);
+        engine.add_layer(scene_layer);
 
         // 2. Position camera overlooking 3D city scene
-        map.goto(
+        engine.goto(
             glam::Vec3::new(0.0, 50.0, 0.0),
             GoToOptions::immediate()
                 .with_distance(preset.camera_distance)
@@ -60,7 +60,7 @@ impl Demo for I3SLayerDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
 
         // Preset selector buttons
@@ -68,10 +68,10 @@ impl Demo for I3SLayerDemo {
         for (i, preset) in I3S_PRESETS.iter().enumerate() {
             if ui.selectable_label(self.selected_preset == i, preset.name).clicked() && self.selected_preset != i {
                 self.selected_preset = i;
-                map.remove_layer("i3s_layer");
-                map.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
-                map.add_layer(SceneLayer::new("i3s_layer", preset.name, preset.url));
-                map.goto(
+                engine.remove_layer("i3s_layer");
+                engine.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
+                engine.add_layer(SceneLayer::new("i3s_layer", preset.name, preset.url));
+                engine.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
@@ -87,7 +87,7 @@ impl Demo for I3SLayerDemo {
         // Opacity slider
         ui.label("Opacity:");
         if ui.add(egui::Slider::new(&mut self.opacity, 0.1..=1.0).step_by(0.05)).changed() {
-            if let Some(layer) = map.get_layer_mut::<SceneLayer>("i3s_layer") {
+            if let Some(layer) = engine.get_layer_mut::<SceneLayer>("i3s_layer") {
                 layer.set_opacity(self.opacity);
             }
             changed = true;
@@ -96,7 +96,7 @@ impl Demo for I3SLayerDemo {
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }
