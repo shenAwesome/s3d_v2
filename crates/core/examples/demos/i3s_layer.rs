@@ -112,16 +112,16 @@ impl Demo for I3SLayerDemo {
         "Stream Indexed 3D Scene Layers (I3S) with nodepage index trees and binary vertex buffers."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         if let Some(p) = Self::check_url_preset() {
             self.selected_preset = p;
         }
         let preset = &PRESETS[self.selected_preset];
         let origin = GeoCoord::new(preset.latitude, preset.longitude, 0.0);
-        map.set_origin(origin);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(origin);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // 1. Configure and activate Esri I3S SceneLayer streaming
         let mut scene_layer = SceneLayer::new(
@@ -131,10 +131,10 @@ impl Demo for I3SLayerDemo {
         );
         let c = preset.default_color;
         scene_layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
-        map.add_layer(scene_layer);
+        engine.add_layer(scene_layer);
 
         // 2. Position camera overlooking 3D city scene
-        map.goto(
+        engine.goto(
             glam::Vec3::new(0.0, 50.0, 0.0),
             GoToOptions::immediate()
                 .with_distance(preset.camera_distance)
@@ -143,7 +143,7 @@ impl Demo for I3SLayerDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
 
         // Sync with URL hash / search navigation (e.g. #i3s_layer?preset=1)
@@ -151,13 +151,13 @@ impl Demo for I3SLayerDemo {
             if target_p != self.selected_preset {
                 self.selected_preset = target_p;
                 let preset = &PRESETS[target_p];
-                map.remove_layer("i3s_layer");
-                map.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
+                engine.remove_layer("i3s_layer");
+                engine.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
                 let mut layer = SceneLayer::new("i3s_layer", preset.name, preset.url);
                 let c = preset.default_color;
                 layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
-                map.add_layer(layer);
-                map.goto(
+                engine.add_layer(layer);
+                engine.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
@@ -173,13 +173,13 @@ impl Demo for I3SLayerDemo {
         for (i, preset) in PRESETS.iter().enumerate() {
             if ui.selectable_label(self.selected_preset == i, preset.name).clicked() && self.selected_preset != i {
                 self.selected_preset = i;
-                map.remove_layer("i3s_layer");
-                map.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
+                engine.remove_layer("i3s_layer");
+                engine.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
                 let mut layer = SceneLayer::new("i3s_layer", preset.name, preset.url);
                 let c = preset.default_color;
                 layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
-                map.add_layer(layer);
-                map.goto(
+                engine.add_layer(layer);
+                engine.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
@@ -199,7 +199,7 @@ impl Demo for I3SLayerDemo {
 
         // Shadows toggle
         if ui.checkbox(&mut self.shadows, "Shadows").changed() {
-            if let Some(layer) = map.get_layer_mut::<SceneLayer>("i3s_layer") {
+            if let Some(layer) = engine.get_layer_mut::<SceneLayer>("i3s_layer") {
                 layer.set_cast_shadows(self.shadows);
             }
             changed = true;
@@ -208,7 +208,7 @@ impl Demo for I3SLayerDemo {
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

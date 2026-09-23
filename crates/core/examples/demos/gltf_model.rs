@@ -154,18 +154,18 @@ impl Demo for GltfModelDemo {
         "Anchor geo-referenced 3D structural assets with 6-DOF orientation in local ENU space."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(melbourne);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(melbourne);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // 1. Load context buildings
         let geojson = include_str!("../../assets/sample_buildings.geojson");
         if let Ok(dataset) = s3d_core::gis::geojson_loader::parse_geojson(
             geojson,
-            Some(map.scene.origin),
+            Some(engine.scene.origin),
         ) {
             let mut layer = FeatureLayer::new(
                 "melbourne_buildings",
@@ -174,7 +174,7 @@ impl Demo for GltfModelDemo {
                 [0.85, 0.88, 0.92, 1.0],
             );
             layer.features = dataset.features;
-            map.add_layer(layer);
+            engine.add_layer(layer);
         }
 
         // 2. Instantiate and anchor 3D structural tower asset
@@ -197,10 +197,10 @@ impl Demo for GltfModelDemo {
             ..Default::default()
         };
         model_lyr.features.push(feature);
-        map.add_layer(model_lyr);
+        engine.add_layer(model_lyr);
 
         // 3. Anchor camera closely inspecting 3D model
-        map.goto(
+        engine.goto(
             Vec3::new(320.0, 50.0, 180.0),
             GoToOptions::immediate()
                 .with_distance(240.0)
@@ -209,11 +209,11 @@ impl Demo for GltfModelDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
         ui.label("Focus Camera:");
         if ui.button("Inspect Tower (Close)").clicked() {
-            map.goto(
+            engine.goto(
                 Vec3::new(320.0, 50.0, 180.0),
                 GoToOptions::animated()
                     .with_distance(180.0)
@@ -223,7 +223,7 @@ impl Demo for GltfModelDemo {
             changed = true;
         }
         if ui.button("Context Overview").clicked() {
-            map.goto(
+            engine.goto(
                 Vec3::new(200.0, 40.0, 100.0),
                 GoToOptions::animated()
                     .with_distance(800.0)
@@ -235,7 +235,7 @@ impl Demo for GltfModelDemo {
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

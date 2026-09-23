@@ -31,12 +31,12 @@ impl Demo for ClassBreaksRendererDemo {
         "Continuous attribute-driven color ramp gradient based on building height."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(melbourne);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(melbourne);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // 1. Define Simple Renderer with continuous ColorRamp VisualVariable
         let default_symbol = Symbol3D::simple_extrude([0.5, 0.5, 0.5, 1.0], 25.0);
@@ -78,9 +78,9 @@ impl Demo for ClassBreaksRendererDemo {
             layer.add_graphic(g);
         }
 
-        map.add_layer(layer);
+        engine.add_layer(layer);
 
-        map.goto(
+        engine.goto(
             glam::Vec3::new(10.0, 45.0, 5.0),
             GoToOptions::immediate()
                 .with_distance(380.0)
@@ -89,7 +89,7 @@ impl Demo for ClassBreaksRendererDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, _map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, _engine: &mut MapEngine) -> bool {
         // Gradient ramp display
         ui.label(
             egui::RichText::new("■ 15m (Low-Rise)")
@@ -103,7 +103,7 @@ impl Demo for ClassBreaksRendererDemo {
         false
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

@@ -31,12 +31,12 @@ impl Demo for UniqueValueRendererDemo {
         "Categorical polygon extrusion and styling driven by land-use zoning attributes."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(melbourne);
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(melbourne);
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // 1. Define data-driven UniqueValueRenderer
         let renderer = Renderer::UniqueValue {
@@ -120,9 +120,9 @@ impl Demo for UniqueValueRendererDemo {
         g_park.set_attribute("zone", "parkland");
         layer.add_graphic(g_park);
 
-        map.add_layer(layer);
+        engine.add_layer(layer);
 
-        map.goto(
+        engine.goto(
             glam::Vec3::new(15.0, 25.0, 40.0),
             GoToOptions::immediate()
                 .with_distance(360.0)
@@ -131,7 +131,7 @@ impl Demo for UniqueValueRendererDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, _map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, _engine: &mut MapEngine) -> bool {
         // Display zoning legend
         ui.label(egui::RichText::new("■ Commercial").color(egui::Color32::from_rgb(46, 140, 240)));
         ui.label(egui::RichText::new("■ Residential").color(egui::Color32::from_rgb(245, 184, 51)));
@@ -140,7 +140,7 @@ impl Demo for UniqueValueRendererDemo {
         false
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

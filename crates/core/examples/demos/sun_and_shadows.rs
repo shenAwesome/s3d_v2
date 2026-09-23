@@ -27,18 +27,18 @@ impl Demo for SunAndShadowsDemo {
         "Real-time astronomical solar calculation and directional shadow casting."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(ProjectOrigin::from_geo(melbourne));
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.basemap.is_enabled = true;
-        map.basemap.provider = BasemapProvider::OpenStreetMap;
+        engine.set_origin(ProjectOrigin::from_geo(melbourne));
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.basemap.is_enabled = true;
+        engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
         // Load buildings for shadow casting
         let geojson = include_str!("../../assets/sample_buildings.geojson");
         if let Ok(dataset) = s3d_core::gis::geojson_loader::parse_geojson(
             geojson,
-            Some(map.scene.origin),
+            Some(engine.scene.origin),
         ) {
             let mut layer = s3d_core::gis::layer::FeatureLayer::new(
                 "melbourne_buildings",
@@ -47,16 +47,16 @@ impl Demo for SunAndShadowsDemo {
                 [0.85, 0.88, 0.92, 1.0],
             );
             layer.features = dataset.features;
-            map.add_layer(layer);
+            engine.add_layer(layer);
         }
 
         // Set solar time and compute sun position
         self.sim_hour = 14.0;
-        map.solar_dt.hour = 14;
-        map.solar_dt.minute = 0;
-        map.update_solar_position();
+        engine.solar_dt.hour = 14;
+        engine.solar_dt.minute = 0;
+        engine.update_solar_position();
 
-        map.goto(
+        engine.goto(
             [144.9631, -37.8136],
             s3d_core::engine::map_engine::GoToOptions::immediate()
                 .with_distance(1600.0)
@@ -65,7 +65,7 @@ impl Demo for SunAndShadowsDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         ui.label("Sun Hour:");
         // Slider to adjust time of day (6:00 – 18:00)
         if ui.add(
@@ -73,14 +73,14 @@ impl Demo for SunAndShadowsDemo {
                 .suffix("h")
                 .step_by(1.0),
         ).changed() {
-            map.solar_dt.hour = self.sim_hour.round() as u32;
-            map.update_solar_position();
+            engine.solar_dt.hour = self.sim_hour.round() as u32;
+            engine.update_solar_position();
             return true;
         }
         false
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

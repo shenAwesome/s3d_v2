@@ -27,42 +27,42 @@ impl Demo for BasemapSwitcherDemo {
         "Switching active basemap using Esri-style presets (OSM, Esri Satellite, Streets, Topo)."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        map.set_origin(ProjectOrigin::from_geo(melbourne));
-        map.set_basemap(Basemap::osm());
+        engine.set_origin(ProjectOrigin::from_geo(melbourne));
+        engine.set_basemap(Basemap::osm());
         self.selected = BasemapProvider::OpenStreetMap;
 
-        map.goto([144.9631, -37.8136], 2500.0);
+        engine.goto([144.9631, -37.8136], 2500.0);
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
         // Basemap selector buttons
         if ui.selectable_label(self.selected == BasemapProvider::OpenStreetMap, "OpenStreetMap").clicked() {
             self.selected = BasemapProvider::OpenStreetMap;
-            map.set_basemap(Basemap::osm());
+            engine.set_basemap(Basemap::osm());
             changed = true;
         }
         if ui.selectable_label(self.selected == BasemapProvider::EsriStreet, "Esri Streets").clicked() {
             self.selected = BasemapProvider::EsriStreet;
-            map.set_basemap(Basemap::esri_streets());
+            engine.set_basemap(Basemap::esri_streets());
             changed = true;
         }
         if ui.selectable_label(self.selected == BasemapProvider::EsriTopo, "Esri Topo").clicked() {
             self.selected = BasemapProvider::EsriTopo;
-            map.set_basemap(Basemap::esri_topo());
+            engine.set_basemap(Basemap::esri_topo());
             changed = true;
         }
         if ui.selectable_label(self.selected == BasemapProvider::EsriImagery, "Esri Imagery").clicked() {
             self.selected = BasemapProvider::EsriImagery;
-            map.set_basemap(Basemap::esri_imagery());
+            engine.set_basemap(Basemap::esri_imagery());
             changed = true;
         }
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }

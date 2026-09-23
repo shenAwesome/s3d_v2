@@ -27,16 +27,16 @@ impl Demo for TerrainElevationDemo {
         "Adding 3D digital elevation model (DEM) terrain with height exaggeration."
     }
 
-    fn setup(&mut self, map: &mut MapEngine) {
+    fn setup(&mut self, engine: &mut MapEngine) {
         // Center on Mount Fuji (3,776 m)
         let fuji = GeoCoord::new(35.3606, 138.7274, 3776.0);
-        map.set_origin(ProjectOrigin::from_geo(fuji));
-        map.projection_mode = ProjectionMode::PlanarENU;
-        map.set_basemap(Basemap::esri_imagery());
+        engine.set_origin(ProjectOrigin::from_geo(fuji));
+        engine.projection_mode = ProjectionMode::PlanarENU;
+        engine.set_basemap(Basemap::esri_imagery());
 
         // Add Mapbox Terrain-RGB DEM as elevation source
         self.exaggeration = 1.5;
-        map.set_elevation_layer(
+        engine.set_elevation_layer(
             std::sync::Arc::new(s3d_core::gis::ElevationLayer::mapbox_terrain_rgb(
                 "fuji_dem",
                 "https://api.mapbox.com/v4/mapbox.terrain-rgb/{z}/{x}/{y}.pngraw",
@@ -44,7 +44,7 @@ impl Demo for TerrainElevationDemo {
             self.exaggeration,
         );
 
-        map.goto(
+        engine.goto(
             [138.7274, 35.3606],
             s3d_core::engine::map_engine::GoToOptions::immediate()
                 .with_distance(18000.0)
@@ -53,20 +53,20 @@ impl Demo for TerrainElevationDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, map: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         ui.label("Exaggeration:");
         // Height exaggeration slider (0.5× – 3.0×)
         if ui.add(
             egui::Slider::new(&mut self.exaggeration, 0.5..=3.0).step_by(0.1),
         ).changed() {
-            map.terrain.height_exaggeration = self.exaggeration;
-            map.map.ground.elevation_exaggeration = self.exaggeration;
+            engine.terrain.height_exaggeration = self.exaggeration;
+            engine.map.ground.elevation_exaggeration = self.exaggeration;
             return true;
         }
         false
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
         // No click handling needed
     }
 }
