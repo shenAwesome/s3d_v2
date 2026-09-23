@@ -51,6 +51,8 @@ impl MapEngine {
 
     /// Renders the MapEngine canvas widget inside the given egui::Ui container.
     pub fn show_ui(&mut self, ui: &mut egui::Ui) -> MapResponse {
+        self.sync_terrain_if_changed();
+
         let available_size = ui.available_size();
         let width = (available_size.x.floor() as u32).max(64);
         let height = (available_size.y.floor() as u32).max(64);
@@ -94,7 +96,7 @@ impl MapEngine {
             &self.solar_pos,
             &dummy_measurement,
             &dummy_toolbox,
-            self.basemap.is_enabled || self.terrain.is_enabled,
+            self.basemap.is_enabled || self.terrain_mgr.is_enabled,
             self.basemap.zoom,
             self.sun_intensity,
             self.ambient_intensity,

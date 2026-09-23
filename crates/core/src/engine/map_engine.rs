@@ -7,7 +7,7 @@ use crate::gis::layer::{
     FeatureLayer, Layer, LayerGpuContext, LayerRegistry, LayerStatus, LayerType,
     LayerUpdateContext,
 };
-use crate::gis::terrain::TerrainManager;
+use crate::gis::terrain::{Terrain, TerrainManager};
 use crate::renderer::camera::{Camera, GlobeFlightState};
 use crate::renderer::render_engine::RenderEngine;
 use crate::scene::scene::Scene;
@@ -44,7 +44,9 @@ pub struct MapEngine {
     // GIS Streaming Data Sources
     pub sources: SourceRegistry,
     pub basemap: BasemapManager,
-    pub terrain: TerrainManager,
+    pub terrain: Option<Terrain>,
+    pub terrain_mgr: TerrainManager,
+    previous_terrain: Option<Terrain>,
     pub layers: Vec<Box<dyn Layer>>,
     pub layer_registry: LayerRegistry,
     pub budget: ResourceBudget,
@@ -113,7 +115,9 @@ impl MapEngine {
 
             sources: SourceRegistry::new(),
             basemap: BasemapManager::new(),
-            terrain: TerrainManager::new(),
+            terrain: None,
+            terrain_mgr: TerrainManager::new(),
+            previous_terrain: None,
             layers: Vec::new(),
             layer_registry: LayerRegistry::default(),
             budget: ResourceBudget::default(),
@@ -160,11 +164,11 @@ impl MapEngine {
         }
         // Synchronize Ground elevation
         if !map.ground.layers.is_empty() {
-            self.terrain.is_enabled = true;
-            self.terrain.height_exaggeration = map.ground.elevation_exaggeration;
+            self.terrain = Some(Terrain::Esri(crate::gis::terrain::EsriTerrain::default().with_exaggeration(map.ground.elevation_exaggeration)));
         } else {
-            self.terrain.is_enabled = false;
+            self.terrain = None;
         }
+        self.sync_terrain_if_changed();
         self.map = map;
         match self.map.viewing_mode {
             crate::gis::map::ViewingMode::Auto { threshold_altitude } => {
@@ -252,11 +256,100 @@ impl MapEngine {
         layer: std::sync::Arc<dyn crate::gis::layer::Layer>,
         exaggeration: f32,
     ) {
-        self.terrain.is_enabled = true;
-        self.terrain.height_exaggeration = exaggeration;
+        self.terrain = Some(Terrain::Esri(crate::gis::terrain::EsriTerrain::default().with_exaggeration(exaggeration)));
         self.map.ground.layers.clear();
         self.map.ground.add_layer(layer);
         self.map.ground.elevation_exaggeration = exaggeration;
+        self.sync_terrain_if_changed();
+    }
+
+    /// Sets or clears the active 3D digital elevation model (DEM) terrain.
+    ///
+    /// Accepts `None`, `AwsTerrain`, `EsriTerrain`, `Terrain`, or `Option<Terrain>`.
+    pub fn set_terrain(&mut self, terrain: impl crate::gis::terrain::IntoOptionalTerrain) {
+        self.terrain = terrain.into_optional_terrain();
+        self.sync_terrain_if_changed();
+    }
+
+    /// Synchronizes changes in `self.terrain` to `self.terrain_mgr` and reloads renderer meshes if needed.
+    pub fn sync_terrain_if_changed(&mut self) {
+        if self.terrain == self.previous_terrain {
+            return;
+        }
+
+        match &self.terrain {
+            Some(t) => {
+                let prev_provider = self.terrain_mgr.provider;
+                let prev_url = self.terrain_mgr.custom_url.clone();
+                let new_provider = t.provider();
+                let new_url = t.custom_url().map(|s| s.to_string());
+                let new_exagg = t.exaggeration();
+                let was_enabled = self.terrain_mgr.is_enabled;
+                let prev_exagg = self.terrain_mgr.height_exaggeration;
+
+                self.terrain_mgr.is_enabled = true;
+                self.terrain_mgr.height_exaggeration = new_exagg;
+
+                let provider_or_url_changed = prev_provider != new_provider || prev_url != new_url;
+                if provider_or_url_changed {
+                    self.terrain_mgr.set_provider_with_url(new_provider, new_url);
+                }
+
+                if !was_enabled || provider_or_url_changed || (prev_exagg - new_exagg).abs() > 1e-4 {
+                    if let Some(renderer) = &mut self.renderer {
+                        if self.basemap.is_enabled {
+                            renderer.reload_all_terrain_meshes(&self.scene.origin, &self.terrain_mgr);
+                        }
+                    }
+                    if !was_enabled {
+                        self.events.push(MapEvent::TerrainToggled(true));
+                    }
+                }
+            }
+            None => {
+                let was_enabled = self.terrain_mgr.is_enabled;
+                self.terrain_mgr.is_enabled = false;
+                if was_enabled {
+                    if let Some(renderer) = &mut self.renderer {
+                        if self.basemap.is_enabled {
+                            renderer.reload_all_terrain_meshes(&self.scene.origin, &self.terrain_mgr);
+                        } else {
+                            renderer.clear_basemap_tiles();
+                        }
+                    }
+                    self.events.push(MapEvent::TerrainToggled(false));
+                }
+            }
+        }
+
+        self.previous_terrain = self.terrain.clone();
+    }
+
+    /// Enables or disables 3D digital elevation model (DEM) terrain streaming
+    pub fn set_terrain_enabled(&mut self, enabled: bool) {
+        if enabled {
+            if self.terrain.is_none() {
+                self.terrain = Some(Terrain::Esri(crate::gis::terrain::EsriTerrain::default()));
+            }
+        } else {
+            self.terrain = None;
+        }
+        self.sync_terrain_if_changed();
+    }
+
+    /// Sets the active 3D terrain elevation provider (e.g. AWS Terrarium or Esri WorldElevation3D)
+    pub fn set_terrain_provider(&mut self, provider: crate::gis::terrain::TerrainProvider) {
+        let exagg = self.terrain.as_ref().map(|t| t.exaggeration()).unwrap_or(1.0);
+        let new_t = match provider {
+            crate::gis::terrain::TerrainProvider::EsriTerrain3D => {
+                Terrain::Esri(crate::gis::terrain::EsriTerrain::default().with_exaggeration(exagg))
+            }
+            crate::gis::terrain::TerrainProvider::AwsTerrarium => {
+                Terrain::Aws(crate::gis::terrain::AwsTerrain::default().with_exaggeration(exagg))
+            }
+        };
+        self.terrain = Some(new_t);
+        self.sync_terrain_if_changed();
     }
 
     /// Attach a pre-configured RenderEngine
@@ -293,7 +386,8 @@ impl MapEngine {
             sources: &self.sources,
             budget: &self.budget,
             basemap: &self.basemap,
-            terrain: &self.terrain,
+            terrain: self.terrain.as_ref(),
+            terrain_mgr: &self.terrain_mgr,
             solar_pos: &self.solar_pos,
             solar_dt: &self.solar_dt,
             sunlight_enabled: self.sunlight_enabled,
@@ -318,12 +412,15 @@ impl MapEngine {
     /// Returns true if any background streaming pipeline is actively downloading tiles/data
     pub fn is_streaming(&self) -> bool {
         self.basemap.is_streaming()
-            || self.terrain.is_streaming()
+            || self.terrain_mgr.is_streaming()
             || self.layers.iter().any(|l| l.is_streaming())
     }
 
     /// Per-frame update: advances flight transitions, updates streaming data, syncs solar position
     pub fn update(&mut self, dt: f32) {
+        // 0. Synchronize terrain if modified
+        self.sync_terrain_if_changed();
+
         // 1. Advance camera smooth damping
         if self.camera.update_smooth_zoom(dt) {
             self.events.push(MapEvent::CameraMoved);
@@ -346,13 +443,16 @@ impl MapEngine {
 
     /// Updates Basemap, 3D Terrain, 3D Tiles, and I3S streaming
     pub fn update_streaming(&mut self) {
+        // 0. Synchronize terrain if modified
+        self.sync_terrain_if_changed();
+
         let (vp_w, vp_h) = if let Some(renderer) = &self.renderer {
             (renderer.current_width as f32, renderer.current_height as f32)
         } else {
             (1280.0, 720.0)
         };
 
-        if self.basemap.is_enabled || self.terrain.is_enabled {
+        if self.basemap.is_enabled || self.terrain_mgr.is_enabled {
             let active_tiles = if self.projection_mode == ProjectionMode::GlobeECEF {
                 self.basemap.calculate_globe_camera_tiles(&self.camera, vp_w, vp_h)
             } else {
@@ -379,7 +479,7 @@ impl MapEngine {
             if self.basemap.is_enabled {
                 self.basemap.request_tiles(&active_tiles);
                 new_tiles = self.basemap.drain_completed_tiles();
-            } else if self.terrain.is_enabled {
+            } else if self.terrain_mgr.is_enabled {
                 if let Some(renderer) = &self.renderer {
                     for &coord in &active_tiles {
                         if !renderer.gpu_tiles.contains_key(&coord) {
@@ -393,11 +493,11 @@ impl MapEngine {
                 self.has_new_gpu_tiles = true;
             }
 
-            if self.terrain.is_enabled {
-                self.terrain.request_tiles(&active_tiles);
+            if self.terrain_mgr.is_enabled {
+                self.terrain_mgr.request_tiles(&active_tiles);
             }
-            let new_terrain_tiles = if self.terrain.is_enabled {
-                self.terrain.drain_completed()
+            let new_terrain_tiles = if self.terrain_mgr.is_enabled {
+                self.terrain_mgr.drain_completed()
             } else {
                 Vec::new()
             };
@@ -411,8 +511,8 @@ impl MapEngine {
                 renderer.update_basemap_uniforms(self.basemap.opacity, grid_mode, self.basemap.show_debug_borders);
 
                 for tile in new_tiles {
-                    let terrain_tile = if self.terrain.is_enabled {
-                        self.terrain.get_terrain_for_tile(tile.coord)
+                    let terrain_tile = if self.terrain_mgr.is_enabled {
+                        self.terrain_mgr.get_terrain_for_tile(tile.coord)
                     } else {
                         None
                     };
@@ -420,9 +520,9 @@ impl MapEngine {
                         tile,
                         &self.scene.origin,
                         self.basemap.opacity,
-                        Some(&self.terrain),
+                        Some(&self.terrain_mgr),
                         terrain_tile.as_ref(),
-                        self.terrain.height_exaggeration,
+                        self.terrain_mgr.height_exaggeration,
                     );
                     for ev in evicted {
                         self.basemap.unmark_requested(ev);
@@ -437,13 +537,13 @@ impl MapEngine {
                         .filter(|c| c == &terrain_tile.coord || c.is_descendant_of(&terrain_tile.coord) || terrain_tile.coord.is_descendant_of(c))
                         .collect();
                     for aff in affected_coords {
-                        let aff_terrain = self.terrain.get_terrain_for_tile(aff);
+                        let aff_terrain = self.terrain_mgr.get_terrain_for_tile(aff);
                         renderer.update_tile_terrain_mesh(
                             aff,
                             &self.scene.origin,
-                            Some(&self.terrain),
+                            Some(&self.terrain_mgr),
                             aff_terrain.as_ref(),
-                            self.terrain.height_exaggeration,
+                            self.terrain_mgr.height_exaggeration,
                         );
                     }
                 }
@@ -647,7 +747,7 @@ impl MapEngine {
             r.clear_threedtiles();
         }
         self.basemap.reset_cache();
-        self.terrain.clear_cache();
+        self.terrain_mgr.clear_cache();
         for layer in &mut self.layers {
             layer.on_origin_changed(&self.scene.origin);
         }
@@ -692,7 +792,7 @@ impl MapEngine {
             renderer.clear_meshes();
         }
         self.basemap.reset_cache();
-        self.terrain.clear_cache();
+        self.terrain_mgr.clear_cache();
 
         const WGS84_RADIUS: f32 = crate::gis::crs::WGS84_A as f32;
         self.camera.target = glam::Vec3::ZERO;
@@ -812,11 +912,16 @@ impl MapEngine {
             },
             MapCommand::Terrain(t_cmd) => match t_cmd {
                 TerrainCommand::SetEnabled(enabled) => {
-                    self.terrain.is_enabled = enabled;
-                    self.events.push(MapEvent::TerrainToggled(enabled));
+                    self.set_terrain_enabled(enabled);
                 }
                 TerrainCommand::SetHeightExaggeration(exagg) => {
-                    self.terrain.height_exaggeration = exagg;
+                    if let Some(t) = &mut self.terrain {
+                        t.set_exaggeration(exagg);
+                    }
+                    self.terrain_mgr.height_exaggeration = exagg;
+                    if let Some(renderer) = &mut self.renderer {
+                        renderer.reload_all_terrain_meshes(&self.scene.origin, &self.terrain_mgr);
+                    }
                 }
             },
             MapCommand::Clock(clock_cmd) => match clock_cmd {
@@ -1411,9 +1516,9 @@ impl MapEngine {
         let mesh_hit: Option<Vec3> = self.collider.cast_ray_segment(p0, p1).map(|(_, pt, _)| pt);
 
         // 2. Terrain or ground hit
-        let ground_hit: Option<Vec3> = if self.terrain.is_enabled {
+        let ground_hit: Option<Vec3> = if self.terrain_mgr.is_enabled {
             let origin = self.scene.origin;
-            let terrain = &self.terrain;
+            let terrain = &self.terrain_mgr;
             ray.intersect_terrain_bisection(|x: f32, z: f32| -> f32 {
                 let geo = origin.local_to_geo(Vec3::new(x, 0.0, z));
                 let geodetic_elev = terrain

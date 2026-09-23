@@ -339,4 +339,60 @@ fn test_polymorphic_layers_lifecycle() {
     assert_eq!(engine.layers.len(), 0);
 }
 
+#[test]
+fn test_terrain_syntax_and_classes() {
+    use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, Terrain, TerrainProvider};
+    use s3d_core::engine::MapEngine;
+
+    let mut engine = MapEngine::default();
+
+    // 1. Terrain is None by default
+    assert!(engine.terrain.is_none());
+    assert!(!engine.terrain_mgr.is_enabled);
+
+    // 2. Setting AwsTerrain directly
+    engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
+    engine.sync_terrain_if_changed();
+
+    assert!(engine.terrain.is_some());
+    assert!(engine.terrain_mgr.is_enabled);
+    assert_eq!(engine.terrain_mgr.provider, TerrainProvider::AwsTerrarium);
+    assert_eq!(engine.terrain_mgr.height_exaggeration, 1.5);
+
+    // 3. Setting EsriTerrain directly
+    engine.terrain = Some(EsriTerrain::new().with_exaggeration(2.0).into());
+    engine.sync_terrain_if_changed();
+
+    assert!(engine.terrain.is_some());
+    assert!(engine.terrain_mgr.is_enabled);
+    assert_eq!(engine.terrain_mgr.provider, TerrainProvider::EsriTerrain3D);
+    assert_eq!(engine.terrain_mgr.height_exaggeration, 2.0);
+
+    // 4. Setting to None disables terrain
+    engine.terrain = None;
+    engine.sync_terrain_if_changed();
+
+    assert!(engine.terrain.is_none());
+    assert!(!engine.terrain_mgr.is_enabled);
+
+    // 5. Using Terrain::aws() and Terrain::esri() constructors
+    let t_aws = Terrain::aws().with_exaggeration(3.0);
+    assert_eq!(t_aws.provider(), TerrainProvider::AwsTerrarium);
+    assert_eq!(t_aws.exaggeration(), 3.0);
+
+    let t_esri = Terrain::esri().with_exaggeration(0.5);
+    assert_eq!(t_esri.provider(), TerrainProvider::EsriTerrain3D);
+    assert_eq!(t_esri.exaggeration(), 0.5);
+
+    // 6. engine.set_terrain helper
+    engine.set_terrain(AwsTerrain::new().with_exaggeration(1.2));
+    assert!(engine.terrain.is_some());
+    assert!(engine.terrain_mgr.is_enabled);
+    assert_eq!(engine.terrain_mgr.height_exaggeration, 1.2);
+
+    engine.set_terrain(None);
+    assert!(engine.terrain.is_none());
+    assert!(!engine.terrain_mgr.is_enabled);
+}
+
 

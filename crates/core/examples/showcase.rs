@@ -150,7 +150,7 @@ impl ShowcaseApp {
 
         // Reset map state before activating new demo
         self.engine.clear_layers();
-        self.engine.terrain.is_enabled = false;
+        self.engine.terrain = None;
         self.engine.selected_feature = None;
         if let Some(r) = &mut self.engine.renderer {
             r.set_selected_mesh(None);

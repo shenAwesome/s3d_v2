@@ -58,3 +58,8 @@ pub use source::{
     RequestHandle, Source, SourceCaps, SourceId, SourceKind, SourceRegistry, TileKey, TileScheme,
     TileSource, XyzRasterSource,
 };
+
+pub use terrain::{
+    AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D, IntoOptionalTerrain,
+    TerrariumTerrain, Terrain, TerrainManager, TerrainProvider, TerrainShadingMode,
+};

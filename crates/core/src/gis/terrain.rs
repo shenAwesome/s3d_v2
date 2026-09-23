@@ -45,14 +45,20 @@ impl TerrainProvider {
     }
 
     pub fn tile_url(&self, coord: TileCoord) -> String {
+        self.tile_url_with_base(coord, None)
+    }
+
+    pub fn tile_url_with_base(&self, coord: TileCoord, custom_base: Option<&str>) -> String {
         match self {
             TerrainProvider::EsriTerrain3D => {
                 // Esri REST ImageServer uses /tile/{z}/{row}/{col} -> /tile/{z}/{y}/{x}
-                format!("{}/tile/{}/{}/{}", ESRI_TERRAIN3D_URL, coord.z, coord.y, coord.x)
+                let base = custom_base.unwrap_or(ESRI_TERRAIN3D_URL);
+                format!("{}/tile/{}/{}/{}", base, coord.z, coord.y, coord.x)
             }
             TerrainProvider::AwsTerrarium => {
                 // AWS Terrarium uses /{z}/{x}/{y}.png
-                format!("{}/{}/{}/{}.png", AWS_TERRARIUM_URL, coord.z, coord.x, coord.y)
+                let base = custom_base.unwrap_or(AWS_TERRARIUM_URL);
+                format!("{}/{}/{}/{}.png", base, coord.z, coord.x, coord.y)
             }
         }
     }
@@ -62,6 +68,208 @@ impl TerrainProvider {
             TerrainProvider::EsriTerrain3D => DecodedTerrainTile::from_lerc_bytes(coord, bytes),
             TerrainProvider::AwsTerrarium => DecodedTerrainTile::from_image_bytes(coord, bytes),
         }
+    }
+}
+
+/// AWS Open Data Terrarium 3D Elevation Terrain
+///
+/// Free, global elevation dataset hosted on AWS S3 Open Data.
+/// Sourced from 3DEP (~10m in USA), SRTM (~30m globally), and GMTED fallback.
+/// Uses 256x256 RGB-encoded PNG tiles where:
+/// `elevation = (R * 256 + G + B / 256) - 32768`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AwsTerrain {
+    /// Height exaggeration factor applied to terrain relief (default: 1.0)
+    pub height_exaggeration: f32,
+    /// Base URL endpoint for Terrarium PNG tiles
+    pub url: String,
+}
+
+impl Default for AwsTerrain {
+    fn default() -> Self {
+        Self {
+            height_exaggeration: 1.0,
+            url: AWS_TERRARIUM_URL.to_string(),
+        }
+    }
+}
+
+impl AwsTerrain {
+    /// Creates a new AwsTerrain instance with default configuration
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the elevation height exaggeration factor
+    pub fn with_exaggeration(mut self, factor: f32) -> Self {
+        self.height_exaggeration = factor;
+        self
+    }
+
+    /// Sets a custom URL for the Terrarium DEM endpoint
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self
+    }
+}
+
+/// Type alias for [`AwsTerrain`]
+pub type AwsTerrariumTerrain = AwsTerrain;
+/// Type alias for [`AwsTerrain`]
+pub type TerrariumTerrain = AwsTerrain;
+
+/// Esri WorldElevation3D 3D Elevation Terrain
+///
+/// High-resolution global elevation up to ~10m hosted on ArcGIS Online.
+/// Uses 257x257 LERC-compressed Float32 raster elevation tiles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EsriTerrain {
+    /// Height exaggeration factor applied to terrain relief (default: 1.0)
+    pub height_exaggeration: f32,
+    /// Base URL endpoint for Esri ImageServer REST API
+    pub url: String,
+}
+
+impl Default for EsriTerrain {
+    fn default() -> Self {
+        Self {
+            height_exaggeration: 1.0,
+            url: ESRI_TERRAIN3D_URL.to_string(),
+        }
+    }
+}
+
+impl EsriTerrain {
+    /// Creates a new EsriTerrain instance with default configuration
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the elevation height exaggeration factor
+    pub fn with_exaggeration(mut self, factor: f32) -> Self {
+        self.height_exaggeration = factor;
+        self
+    }
+
+    /// Sets a custom URL for the Esri Terrain3D ImageServer endpoint
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self
+    }
+}
+
+/// Type alias for [`EsriTerrain`]
+pub type EsriTerrain3D = EsriTerrain;
+
+/// 3D Digital Elevation Model (DEM) Terrain configuration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Terrain {
+    /// AWS Open Data Terrarium RGB PNG elevation
+    Aws(AwsTerrain),
+    /// Esri WorldElevation3D LERC float32 elevation
+    Esri(EsriTerrain),
+}
+
+impl Terrain {
+    /// Creates AWS Open Data Terrarium terrain with default exaggeration (1.0)
+    pub fn aws() -> Self {
+        Terrain::Aws(AwsTerrain::new())
+    }
+
+    /// Creates Esri WorldElevation3D terrain with default exaggeration (1.0)
+    pub fn esri() -> Self {
+        Terrain::Esri(EsriTerrain::new())
+    }
+
+    /// Builder helper to set height exaggeration
+    pub fn with_exaggeration(mut self, factor: f32) -> Self {
+        self.set_exaggeration(factor);
+        self
+    }
+
+    /// Mutates the height exaggeration factor
+    pub fn set_exaggeration(&mut self, factor: f32) {
+        match self {
+            Terrain::Aws(t) => t.height_exaggeration = factor,
+            Terrain::Esri(t) => t.height_exaggeration = factor,
+        }
+    }
+
+    /// Returns the active height exaggeration factor
+    pub fn exaggeration(&self) -> f32 {
+        match self {
+            Terrain::Aws(t) => t.height_exaggeration,
+            Terrain::Esri(t) => t.height_exaggeration,
+        }
+    }
+
+    /// Returns the underlying [`TerrainProvider`] enum variant
+    pub fn provider(&self) -> TerrainProvider {
+        match self {
+            Terrain::Aws(_) => TerrainProvider::AwsTerrarium,
+            Terrain::Esri(_) => TerrainProvider::EsriTerrain3D,
+        }
+    }
+
+    /// Returns the custom URL if specified, or None for the default URL
+    pub fn custom_url(&self) -> Option<&str> {
+        match self {
+            Terrain::Aws(t) => {
+                if t.url == AWS_TERRARIUM_URL {
+                    None
+                } else {
+                    Some(&t.url)
+                }
+            }
+            Terrain::Esri(t) => {
+                if t.url == ESRI_TERRAIN3D_URL {
+                    None
+                } else {
+                    Some(&t.url)
+                }
+            }
+        }
+    }
+}
+
+impl From<AwsTerrain> for Terrain {
+    fn from(t: AwsTerrain) -> Self {
+        Terrain::Aws(t)
+    }
+}
+
+impl From<EsriTerrain> for Terrain {
+    fn from(t: EsriTerrain) -> Self {
+        Terrain::Esri(t)
+    }
+}
+
+/// Helper trait allowing flexible assignment to [`MapEngine::set_terrain`]
+pub trait IntoOptionalTerrain {
+    fn into_optional_terrain(self) -> Option<Terrain>;
+}
+
+impl IntoOptionalTerrain for Terrain {
+    fn into_optional_terrain(self) -> Option<Terrain> {
+        Some(self)
+    }
+}
+
+impl IntoOptionalTerrain for AwsTerrain {
+    fn into_optional_terrain(self) -> Option<Terrain> {
+        Some(Terrain::Aws(self))
+    }
+}
+
+impl IntoOptionalTerrain for EsriTerrain {
+    fn into_optional_terrain(self) -> Option<Terrain> {
+        Some(Terrain::Esri(self))
+    }
+}
+
+impl IntoOptionalTerrain for Option<Terrain> {
+    fn into_optional_terrain(self) -> Option<Terrain> {
+        self
     }
 }
 
@@ -272,12 +480,14 @@ pub struct TerrainWorkQueue {
     pub unconsumed_results: usize,
     pub is_shutdown: bool,
     pub provider: TerrainProvider,
+    pub custom_url: Option<String>,
 }
 
 /// Manages multi-resolution 3D Terrain streaming, caching, and elevation queries
 pub struct TerrainManager {
     pub is_enabled: bool,
     pub provider: TerrainProvider,
+    pub custom_url: Option<String>,
     pub height_exaggeration: f32,
     pub shading_mode: TerrainShadingMode,
     pub wireframe: bool,
@@ -309,13 +519,15 @@ impl TerrainManager {
             unconsumed_results: 0,
             is_shutdown: false,
             provider: default_provider,
+            custom_url: None,
         }));
         let work_condvar = Arc::new(Condvar::new());
         let (result_sender, result_receiver) = channel::<TerrainDownloadResult>();
 
         let manager = Self {
-            is_enabled: true, // Default enabled for 3D terrain elevation
+            is_enabled: false, // Default disabled: 3D terrain elevation must be explicitly enabled
             provider: default_provider,
+            custom_url: None,
             height_exaggeration: 1.0,
             shading_mode: TerrainShadingMode::TexturedBasemap,
             wireframe: false,
@@ -343,7 +555,7 @@ impl TerrainManager {
                     .build();
 
                 loop {
-                    let (coord, provider) = {
+                    let (coord, provider, custom_url) = {
                         let mut guard = match queue_arc.lock() {
                             Ok(g) => g,
                             Err(_) => break,
@@ -358,7 +570,8 @@ impl TerrainManager {
                                 if guard.valid_keys.contains(&coord) {
                                     guard.in_flight += 1;
                                     let prov = guard.provider;
-                                    break (coord, prov);
+                                    let curl = guard.custom_url.clone();
+                                    break (coord, prov, curl);
                                 }
                             } else {
                                 guard = match cond_arc.wait(guard) {
@@ -382,7 +595,7 @@ impl TerrainManager {
                     }
 
                     // 2. Perform network request and caching
-                    let url = provider.tile_url(coord);
+                    let url = provider.tile_url_with_base(coord, custom_url.as_deref());
                     let mut success = false;
 
                     if let Ok(resp) = agent.get(&url).call() {
@@ -416,12 +629,20 @@ impl TerrainManager {
     /// Sets the active terrain elevation provider (e.g. Esri WorldElevation3D or AWS Terrarium)
     /// and resets cached height tiles.
     pub fn set_provider(&mut self, provider: TerrainProvider) {
-        if self.provider == provider {
+        self.set_provider_with_url(provider, None);
+    }
+
+    /// Sets the active terrain elevation provider and optional custom base URL,
+    /// and resets cached height tiles.
+    pub fn set_provider_with_url(&mut self, provider: TerrainProvider, custom_url: Option<String>) {
+        if self.provider == provider && self.custom_url == custom_url {
             return;
         }
         self.provider = provider;
+        self.custom_url = custom_url.clone();
         if let Ok(mut queue) = self.work_queue.lock() {
             queue.provider = provider;
+            queue.custom_url = custom_url;
             queue.tasks.clear();
             queue.valid_keys.clear();
         }
@@ -500,10 +721,11 @@ impl TerrainManager {
             // Drop queue lock BEFORE initiating network requests
             drop(queue);
 
+            let custom_url = self.custom_url.clone();
             for coord in tasks_to_dispatch {
                 let tx_clone = tx.clone();
                 let q_clone = queue_arc.clone();
-                let url = provider.tile_url(coord);
+                let url = provider.tile_url_with_base(coord, custom_url.as_deref());
                 crate::gis::platform::http::fetch_bytes(&url, move |res| {
                     if let Ok(mut guard) = q_clone.lock() {
                         guard.in_flight = guard.in_flight.saturating_sub(1);

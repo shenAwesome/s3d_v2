@@ -1,7 +1,16 @@
-//! # Basemap Switcher
+//! # Basemap & 3D Terrain Switcher
 //!
-//! Demonstrates switching the active basemap at runtime between
-//! OpenStreetMap, Esri World Streets, Esri World Topo, and Esri Imagery.
+//! Demonstrates switching the active basemap (OSM, Esri Satellite, Streets, Topo, CAD Grid)
+//! and streaming global 3D digital elevation model (DEM) terrain.
+//!
+//! ### Supported 3D Terrain Sources:
+//! - **AWS Open Data Terrarium**:
+//!   - Type: 256×256 RGB-encoded PNG raster DEM tiles
+//!   - Formula: `elevation = (R * 256 + G + B / 256) - 32768`
+//!   - URL: `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`
+//! - **Esri WorldElevation3D**:
+//!   - Type: 257×257 LERC-compressed Float32 raster elevation tiles
+//!   - URL: `https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer/tile/{z}/{row}/{col}`
 
 use super::Demo;
 use s3d_core::engine::map_engine::MapEngine;
@@ -9,14 +18,21 @@ use s3d_core::engine::widget::MapResponse;
 use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectOrigin};
 use s3d_core::gis::map::Basemap;
+use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, TerrainProvider};
 
 pub struct BasemapSwitcherDemo {
-    selected: BasemapProvider,
+    selected_basemap: BasemapProvider,
+    terrain_enabled: bool,
+    selected_terrain: TerrainProvider,
 }
 
 impl BasemapSwitcherDemo {
     pub fn new() -> Self {
-        Self { selected: BasemapProvider::OpenStreetMap }
+        Self {
+            selected_basemap: BasemapProvider::OpenStreetMap,
+            terrain_enabled: false,
+            selected_terrain: TerrainProvider::AwsTerrarium,
+        }
     }
 }
 
@@ -24,41 +40,102 @@ impl Demo for BasemapSwitcherDemo {
     fn id(&self) -> &'static str { "basemap_switcher" }
     fn title(&self) -> &'static str { "Basemap Switcher" }
     fn description(&self) -> &'static str {
-        "Switching active basemap using Esri-style presets (OSM, Esri Satellite, Streets, Topo)."
+        "Switch active basemap (OSM, Satellite, Streets, Topo, Grid) with 3D terrain DEM toggle."
     }
 
     fn setup(&mut self, engine: &mut MapEngine) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
         engine.set_origin(ProjectOrigin::from_geo(melbourne));
         engine.set_basemap(Basemap::osm());
-        self.selected = BasemapProvider::OpenStreetMap;
+        self.selected_basemap = BasemapProvider::OpenStreetMap;
 
-        engine.goto([144.9631, -37.8136], 2500.0);
+        // Terrain is disabled (None) by default:
+        engine.terrain = None;
+        self.terrain_enabled = false;
+        self.selected_terrain = TerrainProvider::AwsTerrarium;
+
+        // Position camera with an oblique perspective to showcase 3D terrain relief
+        engine.goto(
+            glam::Vec3::ZERO,
+            s3d_core::engine::map_engine::GoToOptions::immediate()
+                .with_distance(3500.0)
+                .with_heading(-30.0)
+                .with_pitch(45.0),
+        );
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
+
         // Basemap selector buttons
-        if ui.selectable_label(self.selected == BasemapProvider::OpenStreetMap, "OpenStreetMap").clicked() {
-            self.selected = BasemapProvider::OpenStreetMap;
+        ui.label("Basemap:");
+        if ui.selectable_label(self.selected_basemap == BasemapProvider::OpenStreetMap, "OpenStreetMap").clicked() {
+            self.selected_basemap = BasemapProvider::OpenStreetMap;
             engine.set_basemap(Basemap::osm());
             changed = true;
         }
-        if ui.selectable_label(self.selected == BasemapProvider::EsriStreet, "Esri Streets").clicked() {
-            self.selected = BasemapProvider::EsriStreet;
+        if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriStreet, "Esri Streets").clicked() {
+            self.selected_basemap = BasemapProvider::EsriStreet;
             engine.set_basemap(Basemap::esri_streets());
             changed = true;
         }
-        if ui.selectable_label(self.selected == BasemapProvider::EsriTopo, "Esri Topo").clicked() {
-            self.selected = BasemapProvider::EsriTopo;
+        if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriTopo, "Esri Topo").clicked() {
+            self.selected_basemap = BasemapProvider::EsriTopo;
             engine.set_basemap(Basemap::esri_topo());
             changed = true;
         }
-        if ui.selectable_label(self.selected == BasemapProvider::EsriImagery, "Esri Imagery").clicked() {
-            self.selected = BasemapProvider::EsriImagery;
+        if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriImagery, "Esri Imagery").clicked() {
+            self.selected_basemap = BasemapProvider::EsriImagery;
             engine.set_basemap(Basemap::esri_imagery());
             changed = true;
         }
+        if ui.selectable_label(self.selected_basemap == BasemapProvider::None, "Grid").clicked() {
+            self.selected_basemap = BasemapProvider::None;
+            engine.set_basemap(Basemap::none());
+            changed = true;
+        }
+
+        ui.separator();
+
+        // 3D Terrain DEM toggle
+        if ui.checkbox(&mut self.terrain_enabled, "Terrain").changed() {
+            if self.terrain_enabled {
+                engine.terrain = match self.selected_terrain {
+                    TerrainProvider::AwsTerrarium => Some(AwsTerrain::new().with_exaggeration(1.5).into()),
+                    TerrainProvider::EsriTerrain3D => Some(EsriTerrain::new().with_exaggeration(1.5).into()),
+                };
+            } else {
+                engine.terrain = None;
+            }
+            changed = true;
+        }
+
+        // Show active terrain source & allow switching terrain provider
+        if self.terrain_enabled {
+            ui.label("DEM:");
+            if ui.selectable_label(
+                self.selected_terrain == TerrainProvider::AwsTerrarium,
+                "AWS Terrarium (RGB PNG)",
+            )
+            .on_hover_text("AWS Open Data Terrarium: 256×256 RGB PNG\nURL: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png")
+            .clicked() && self.selected_terrain != TerrainProvider::AwsTerrarium {
+                self.selected_terrain = TerrainProvider::AwsTerrarium;
+                engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
+                changed = true;
+            }
+
+            if ui.selectable_label(
+                self.selected_terrain == TerrainProvider::EsriTerrain3D,
+                "Esri Terrain3D (LERC)",
+            )
+            .on_hover_text("Esri WorldElevation3D: 257×257 LERC Float32\nURL: https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer")
+            .clicked() && self.selected_terrain != TerrainProvider::EsriTerrain3D {
+                self.selected_terrain = TerrainProvider::EsriTerrain3D;
+                engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.5).into());
+                changed = true;
+            }
+        }
+
         changed
     }
 

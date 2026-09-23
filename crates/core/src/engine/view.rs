@@ -3,7 +3,7 @@ use crate::gis::cache::ResourceBudget;
 use crate::gis::crs::ProjectOrigin;
 use crate::gis::layer::LayerRegistry;
 use crate::gis::source::SourceRegistry;
-use crate::gis::terrain::TerrainManager;
+use crate::gis::terrain::{Terrain, TerrainManager};
 use crate::renderer::camera::Camera;
 use crate::renderer::edges::EdgeConfig;
 use crate::solar::datetime_state::SolarDateTimeState;
@@ -21,7 +21,8 @@ pub struct MapView<'a> {
     pub sources: &'a SourceRegistry,
     pub budget: &'a ResourceBudget,
     pub basemap: &'a BasemapManager,
-    pub terrain: &'a TerrainManager,
+    pub terrain: Option<&'a Terrain>,
+    pub terrain_mgr: &'a TerrainManager,
     pub solar_pos: &'a SolarPosition,
     pub solar_dt: &'a SolarDateTimeState,
     pub sunlight_enabled: bool,

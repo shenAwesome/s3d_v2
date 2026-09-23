@@ -39,7 +39,10 @@ pub use gis::map::{Basemap, Ground, LayerCollection, Map, MapBuilder, Table, Tab
 pub use gis::graphic::Graphic;
 pub use gis::renderer::Renderer;
 pub use gis::basemap::{BasemapManager, BasemapProvider};
-pub use gis::terrain::TerrainManager;
+pub use gis::terrain::{
+    AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D, IntoOptionalTerrain,
+    TerrariumTerrain, Terrain, TerrainManager, TerrainProvider, TerrainShadingMode,
+};
 pub use gis::geojson_loader::GisFeature;
 pub use renderer::camera::{Camera, CameraTarget};
 pub use solar::datetime_state::SolarDateTimeState;
