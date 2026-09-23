@@ -548,6 +548,7 @@ pub struct SceneLayer {
     pub layer_id: u32,
     pub visible: bool,
     pub opacity: f32,
+    pub tint: Option<[f32; 4]>,
     pub lod_threshold_scale: f32,
     pub manager: crate::gis::i3s::I3SManager,
 }
@@ -577,9 +578,19 @@ impl SceneLayer {
             layer_id: 0,
             visible: true,
             opacity: 1.0,
+            tint: None,
             lod_threshold_scale: 1.0,
             manager,
         }
+    }
+
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.tint = Some(tint);
+        self
+    }
+
+    pub fn set_tint(&mut self, tint: [f32; 4]) {
+        self.tint = Some(tint);
     }
 }
 
@@ -633,11 +644,30 @@ impl Layer for SceneLayer {
             return;
         }
         let new_i3s_nodes = self.manager.drain_completed();
+        let server_sym = self.manager.server_symbol.as_ref();
+        let default_edge = server_sym.map(|s| s.edge_enabled);
+        let stroke_color = server_sym.map(|s| s.stroke_color);
+        let stroke_width = server_sym.map(|s| s.stroke_width);
+        let tint = server_sym
+            .map(|s| [s.color_tint[0], s.color_tint[1], s.color_tint[2]])
+            .or_else(|| self.tint.map(|t| [t[0], t[1], t[2]]))
+            .unwrap_or([1.0, 1.0, 1.0]);
+
+        // If newly discovered server symbology arrived, update visuals on all resident GPU tiles
+        if self.manager.has_new_server_symbol {
+            self.manager.has_new_server_symbol = false;
+            let edge_enabled = default_edge.unwrap_or(true);
+            ctx.renderer.update_i3s_visuals(tint, self.opacity, edge_enabled);
+        }
+
         for node in new_i3s_nodes {
             for f in &node.features {
                 ctx.collider.add_mesh(&f.raw_mesh, &format!("{}_feat_{}_{}", self.id, node.node_id, f.feature_id));
             }
-            ctx.renderer.add_i3s_tile(node, [1.0, 1.0, 1.0], self.opacity, true);
+            // For textured nodes, avoid heavy crease lines unless explicitly requested by server symbol.
+            // For untextured nodes, default to true for crisp architectural edges.
+            let edge_enabled = default_edge.unwrap_or(node.image_rgba.is_none());
+            ctx.renderer.add_i3s_tile(node, tint, self.opacity, edge_enabled, stroke_color, stroke_width);
         }
         let evicted = ctx.renderer.prune_unneeded_i3s_tiles(&self.manager.cached_visible_nodes);
         for ev in evicted {

@@ -52,8 +52,11 @@ pub struct I3SGpuTile {
     pub mesh: GpuMesh,
     pub edge_mesh: Option<GpuMesh>,
     pub bind_group: wgpu::BindGroup,
+    pub texture_bind_group: wgpu::BindGroup,
     pub uniform_buffer: wgpu::Buffer,
     pub last_drawn_frame: u64,
+    pub has_vertex_colors: bool,
+    pub has_texture: bool,
 }
 
 pub struct ThreeDTileSubMeshGpu {
@@ -851,24 +854,53 @@ impl RenderEngine {
         tint: [f32; 3],
         opacity: f32,
         edge_enabled: bool,
+        stroke_color: Option<[f32; 4]>,
+        stroke_width: Option<f32>,
     ) {
         if self.i3s_gpu_tiles.contains_key(&decoded.node_id) {
             return;
         }
 
+        let base_col = if decoded.image_rgba.is_some() {
+            [1.0, 1.0, 1.0, decoded.base_color[3]]
+        } else {
+            [
+                decoded.base_color[0] * tint[0],
+                decoded.base_color[1] * tint[1],
+                decoded.base_color[2] * tint[2],
+                decoded.base_color[3],
+            ]
+        };
+
+        let has_vertex_colors = !decoded.raw_mesh.colors.is_empty();
+        let has_texture = decoded.image_rgba.is_some();
+
+        let mut mesh_to_upload = decoded.raw_mesh.clone();
+        if has_vertex_colors && opacity < 0.999 {
+            for c in &mut mesh_to_upload.colors {
+                c[3] = (c[3] * opacity).clamp(0.0, 1.0);
+            }
+        }
+
         if let Some(gpu_mesh) = GpuMesh::from_raw_mesh(
             &self.device,
-            &decoded.raw_mesh,
-            [decoded.base_color[0], decoded.base_color[1], decoded.base_color[2], decoded.base_color[3]],
+            &mesh_to_upload,
+            [base_col[0], base_col[1], base_col[2], base_col[3] * opacity],
         ) {
-            let col_override = [tint[0], tint[1], tint[2], opacity.clamp(0.05, 1.0)];
+            // When mesh has its own binary vertex colors or photo textures, pass [0, 0, 0, 0]
+            // so vs_main passes through vertex colors untouched!
+            let col_override = if has_vertex_colors || has_texture {
+                [0.0, 0.0, 0.0, 0.0]
+            } else {
+                [tint[0] * base_col[0], tint[1] * base_col[1], tint[2] * base_col[2], opacity.clamp(0.05, 1.0) * base_col[3]]
+            };
             let edge_val = if edge_enabled { 1.0 } else { 0.0 };
             let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("I3S Object Uniform Buffer"),
                 contents: bytemuck::bytes_of(&ObjectUniformGpu {
                     model: Mat4::IDENTITY.to_cols_array_2d(),
                     color_override: col_override,
-                    shadow_color: [0.10, 0.12, 0.18, edge_val],
+                    shadow_color: [0.0, 0.0, 0.0, edge_val],
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
@@ -882,16 +914,88 @@ impl RenderEngine {
                 }],
             });
 
-            // Extract sharp geometric crease edges (35 deg threshold) for architectural outlines
-            let crease_lines = decoded.raw_mesh.extract_crease_edges(35.0);
-            let stroke_color = [
-                self.edge_renderer.config.color[0],
-                self.edge_renderer.config.color[1],
-                self.edge_renderer.config.color[2],
-                (self.edge_renderer.config.color[3] * 0.70).clamp(0.25, 0.85),
-            ];
-            let stroke_width = self.edge_renderer.config.width.max(1.0);
-            let edge_mesh = GpuMesh::create_screen_lines_batch(&self.device, &crease_lines, stroke_width, stroke_color);
+            let texture_bind_group = if let Some(arc_img) = &decoded.image_rgba {
+                let (img_w, img_h, rgba_bytes) = &**arc_img;
+                let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(&format!("I3S Texture {}", decoded.node_id)),
+                    size: wgpu::Extent3d {
+                        width: *img_w,
+                        height: *img_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                self.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    rgba_bytes,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * *img_w),
+                        rows_per_image: Some(*img_h),
+                    },
+                    wgpu::Extent3d {
+                        width: *img_w,
+                        height: *img_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let meta_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("I3S Texture Meta {}", decoded.node_id)),
+                    contents: bytemuck::bytes_of(&BasemapUniformGpu {
+                        opacity: 1.0,
+                        brightness: 1.0,
+                        grid_mode: 1.0, // Texture active
+                        debug_border: 0.0,
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("I3S Texture Bind Group {}", decoded.node_id)),
+                    layout: &self.pipelines.basemap_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.basemap_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: meta_buffer.as_entire_binding(),
+                        },
+                    ],
+                })
+            } else {
+                self.default_threedtile_texture_bind_group.clone()
+            };
+
+            // Extract sharp geometric crease edges (35 deg threshold) only if edge_enabled is true
+            let edge_mesh = if edge_enabled {
+                let crease_lines = decoded.raw_mesh.extract_crease_edges(35.0);
+                let s_color = stroke_color.unwrap_or_else(|| [
+                    self.edge_renderer.config.color[0],
+                    self.edge_renderer.config.color[1],
+                    self.edge_renderer.config.color[2],
+                    (self.edge_renderer.config.color[3] * 0.70).clamp(0.25, 0.85),
+                ]);
+                let s_width = stroke_width.unwrap_or(self.edge_renderer.config.width.max(1.0));
+                GpuMesh::create_screen_lines_batch(&self.device, &crease_lines, s_width, s_color)
+            } else {
+                None
+            };
 
             self.i3s_gpu_tiles.insert(
                 decoded.node_id,
@@ -900,22 +1004,29 @@ impl RenderEngine {
                     mesh: gpu_mesh,
                     edge_mesh,
                     bind_group,
+                    texture_bind_group,
                     uniform_buffer,
                     last_drawn_frame: self.frame_count,
+                    has_vertex_colors,
+                    has_texture,
                 },
             );
         }
     }
 
     pub fn update_i3s_visuals(&self, tint: [f32; 3], opacity: f32, edge_enabled: bool) {
-        let col_override = [tint[0], tint[1], tint[2], opacity.clamp(0.05, 1.0)];
         let edge_val = if edge_enabled { 1.0 } else { 0.0 };
-        let data = ObjectUniformGpu {
-            model: Mat4::IDENTITY.to_cols_array_2d(),
-            color_override: col_override,
-            shadow_color: [0.10, 0.12, 0.18, edge_val],
-        };
         for tile in self.i3s_gpu_tiles.values() {
+            let col_override = if tile.has_vertex_colors || tile.has_texture {
+                [0.0, 0.0, 0.0, 0.0]
+            } else {
+                [tint[0], tint[1], tint[2], opacity.clamp(0.05, 1.0)]
+            };
+            let data = ObjectUniformGpu {
+                model: Mat4::IDENTITY.to_cols_array_2d(),
+                color_override: col_override,
+                shadow_color: [0.0, 0.0, 0.0, edge_val],
+            };
             self.queue.write_buffer(&tile.uniform_buffer, 0, bytemuck::bytes_of(&data));
         }
     }
@@ -1641,11 +1752,16 @@ impl RenderEngine {
 
                 // 3. Draw active I3S 3D SceneLayer buildings with PBR sunlight and ambient shading
                 if !self.active_i3s_nodes_to_draw.is_empty() {
+                    main_pass.set_pipeline(&self.pipelines.threedtile_pipeline);
+                    main_pass.set_bind_group(0, &self.global_bind_group, &[]);
+                    main_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
+
                     let current_frame = self.frame_count;
                     for node_id in &self.active_i3s_nodes_to_draw {
                         if let Some(tile) = self.i3s_gpu_tiles.get_mut(node_id) {
                             tile.last_drawn_frame = current_frame;
                             main_pass.set_bind_group(1, &tile.bind_group, &[]);
+                            main_pass.set_bind_group(3, &tile.texture_bind_group, &[]);
                             main_pass.set_vertex_buffer(0, tile.mesh.vertex_buffer.slice(..));
                             main_pass.set_index_buffer(tile.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                             main_pass.draw_indexed(0..tile.mesh.num_indices, 0, 0..1);
@@ -1653,17 +1769,19 @@ impl RenderEngine {
                     }
 
                     // Draw I3S geometric feature crease edges (anti-aliased screen-space quads with depth test & polygon offset)
-                    if self.edge_renderer.config.enabled {
-                        main_pass.set_pipeline(&self.pipelines.screen_line_pipeline);
-                        main_pass.set_bind_group(0, &self.global_bind_group, &[]);
-                        main_pass.set_bind_group(1, &self.default_object_bind_group, &[]);
-                        for node_id in &self.active_i3s_nodes_to_draw {
-                            if let Some(tile) = self.i3s_gpu_tiles.get(node_id) {
-                                if let Some(edge_mesh) = &tile.edge_mesh {
-                                    main_pass.set_vertex_buffer(0, edge_mesh.vertex_buffer.slice(..));
-                                    main_pass.set_index_buffer(edge_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                                    main_pass.draw_indexed(0..edge_mesh.num_indices, 0, 0..1);
+                    let mut lines_pipeline_bound = false;
+                    for node_id in &self.active_i3s_nodes_to_draw {
+                        if let Some(tile) = self.i3s_gpu_tiles.get(node_id) {
+                            if let Some(edge_mesh) = &tile.edge_mesh {
+                                if !lines_pipeline_bound {
+                                    main_pass.set_pipeline(&self.pipelines.screen_line_pipeline);
+                                    main_pass.set_bind_group(0, &self.global_bind_group, &[]);
+                                    main_pass.set_bind_group(1, &self.default_object_bind_group, &[]);
+                                    lines_pipeline_bound = true;
                                 }
+                                main_pass.set_vertex_buffer(0, edge_mesh.vertex_buffer.slice(..));
+                                main_pass.set_index_buffer(edge_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                main_pass.draw_indexed(0..edge_mesh.num_indices, 0, 0..1);
                             }
                         }
                     }

@@ -301,6 +301,40 @@ impl DiskCacheManager {
     #[cfg(target_arch = "wasm32")]
     pub fn write_i3s_geometry(_service_slug: &str, _resource_id: u32, _data: &[u8]) {}
 
+    /// Cache file path for an I3S texture: .cache/i3s/{service_slug}/textures/{resource_id}.bin
+    pub fn i3s_texture_path(service_slug: &str, resource_id: u32) -> PathBuf {
+        Self::get_i3s_cache_root()
+            .join(service_slug)
+            .join("textures")
+            .join(format!("{}.bin", resource_id))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Read I3S texture raw bytes from disk cache if present
+    pub fn read_i3s_texture(service_slug: &str, resource_id: u32) -> Option<Vec<u8>> {
+        if !Self::CACHE_READ_ENABLED {
+            return None;
+        }
+        let path = Self::i3s_texture_path(service_slug, resource_id);
+        fs::read(path).ok()
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn read_i3s_texture(_service_slug: &str, _resource_id: u32) -> Option<Vec<u8>> {
+        None
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Write I3S texture raw bytes to disk cache
+    pub fn write_i3s_texture(service_slug: &str, resource_id: u32, data: &[u8]) {
+        let path = Self::i3s_texture_path(service_slug, resource_id);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(path, data);
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn write_i3s_texture(_service_slug: &str, _resource_id: u32, _data: &[u8]) {}
+
     /// Cache file path for an I3S nodepage JSON: .cache/i3s/{service_slug}/pages/{page_id}.json
     pub fn i3s_page_path(service_slug: &str, page_id: u32) -> PathBuf {
         Self::get_i3s_cache_root()

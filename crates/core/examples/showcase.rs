@@ -34,7 +34,8 @@ fn get_example_id_from_url() -> Option<String> {
     if let Ok(hash) = location.hash() {
         let clean = hash.trim_start_matches('#').trim();
         if !clean.is_empty() {
-            return Some(clean.to_ascii_lowercase().replace('-', "_"));
+            let id = clean.split(&['?', '&', ':', '/'][..]).next().unwrap_or(clean);
+            return Some(id.to_ascii_lowercase().replace('-', "_"));
         }
     }
     if let Ok(search) = location.search() {
@@ -56,7 +57,7 @@ fn sync_url_hash(demos: &[DemoEntry], idx: usize) {
     if let Some(window) = web_sys::window() {
         let target = format!("#{}", demos[idx].demo.id());
         if let Ok(cur) = window.location().hash() {
-            if cur != target {
+            if !cur.starts_with(&target) {
                 let _ = window.location().set_hash(&target);
             }
         }

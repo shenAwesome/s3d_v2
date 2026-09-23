@@ -45,6 +45,8 @@ pub struct I3SGeometryBufferDef {
     pub normal: Option<I3SGeometryAttributeDef>,
     pub uv0: Option<I3SGeometryAttributeDef>,
     pub color: Option<I3SGeometryAttributeDef>,
+    #[serde(alias = "region")]
+    pub uv_region: Option<I3SGeometryAttributeDef>,
     pub feature_id: Option<I3SGeometryAttributeDef>,
     pub face_range: Option<I3SGeometryAttributeDef>,
 }
@@ -53,6 +55,20 @@ pub struct I3SGeometryBufferDef {
 #[serde(rename_all = "camelCase")]
 pub struct I3SGeometryDefinition {
     pub geometry_buffers: Vec<I3SGeometryBufferDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct I3STextureFormat {
+    pub name: Option<String>,
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct I3STextureSetDefinition {
+    pub atlas: Option<bool>,
+    pub formats: Option<Vec<I3STextureFormat>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +96,7 @@ pub struct I3SSceneLayer {
     pub node_pages: Option<I3SNodePagesConfig>,
     pub geometry_definitions: Option<Vec<I3SGeometryDefinition>>,
     pub material_definitions: Option<Vec<I3SMaterialDefinition>>,
+    pub texture_set_definitions: Option<Vec<I3STextureSetDefinition>>,
     pub drawing_info: Option<I3SDrawingInfo>,
 }
 
@@ -93,6 +110,16 @@ pub struct I3SDrawingInfo {
 #[serde(rename_all = "camelCase")]
 pub struct I3SRenderer {
     pub r#type: Option<String>,
+    pub symbol: Option<I3SMeshSymbol3D>,
+    pub default_symbol: Option<I3SMeshSymbol3D>,
+    pub unique_value_infos: Option<Vec<I3SUniqueValueInfo>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct I3SUniqueValueInfo {
+    pub value: Option<serde_json::Value>,
+    pub label: Option<String>,
     pub symbol: Option<I3SMeshSymbol3D>,
 }
 
@@ -142,7 +169,12 @@ impl I3SSceneLayer {
     pub fn extract_symbol(&self) -> Option<I3SServerSymbol> {
         let di = self.drawing_info.as_ref()?;
         let renderer = di.renderer.as_ref()?;
-        let symbol = renderer.symbol.as_ref()?;
+        let symbol = renderer
+            .symbol
+            .as_ref()
+            .or_else(|| renderer.unique_value_infos.as_ref().and_then(|u| u.first()).and_then(|u| u.symbol.as_ref()))
+            .or_else(|| renderer.default_symbol.as_ref())?;
+
         let layers = symbol.symbol_layers.as_ref()?;
         let fill_layer = layers.iter().find(|l| l.r#type.as_deref() == Some("Fill"))?;
 
@@ -170,7 +202,19 @@ impl I3SSceneLayer {
         let mut edge_enabled = false;
         let mut stroke_color = [0.15, 0.16, 0.18, 1.0];
         let mut stroke_width = 1.0;
-        if let Some(edges) = &fill_layer.edges {
+
+        let edges_opt = fill_layer.edges.as_ref().or_else(|| {
+            renderer
+                .unique_value_infos
+                .as_ref()
+                .and_then(|u| u.iter().find_map(|info| {
+                    info.symbol.as_ref()
+                        .and_then(|s| s.symbol_layers.as_ref())
+                        .and_then(|l| l.iter().find_map(|sl| sl.edges.as_ref()))
+                }))
+        });
+
+        if let Some(edges) = edges_opt {
             edge_enabled = edges.r#type.as_deref() == Some("solid") || edges.r#type.is_some();
             if let Some(c) = &edges.color {
                 if c.len() >= 3 {
@@ -353,7 +397,7 @@ pub const I3S_PRESETS: &[I3SPreset] = &[
         longitude: 144.8260,
         latitude: -37.7749,
         camera_distance: 800.0,
-        default_color: [220, 230, 240, 255],
+        default_color: [255, 226, 165, 255],
     },
 ];
 
@@ -382,4 +426,5 @@ pub struct DecodedI3SNode {
     pub aabb_enu: (Vec3, Vec3),
     pub aabb_ecef: (Vec3, Vec3),
     pub base_color: [f32; 4],
+    pub image_rgba: Option<std::sync::Arc<(u32, u32, Vec<u8>)>>,
 }

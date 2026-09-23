@@ -85,9 +85,30 @@ impl I3SGeometryDecoder {
 
         // 4. Color: vertex_count * 4 * 1 byte (u8)
         let col_bytes = vertex_count * 4;
-        let _col_slice = if byte_cursor + col_bytes <= buffer.len() {
+        let col_slice = if byte_cursor + col_bytes <= buffer.len() {
             let s = &buffer[byte_cursor..byte_cursor + col_bytes];
             byte_cursor += col_bytes;
+            Some(s)
+        } else {
+            None
+        };
+
+        // 4b. Optional UV Region: vertex_count * 4 * 2 bytes (UInt16 normalized) = vertex_count * 8 bytes
+        // Present in textured layers with texture atlases (e.g. Glen Eira).
+        let feat_bytes_64 = feature_count * 16;
+        let feat_bytes_32 = feature_count * 12;
+        let feat_start = if feature_count > 0 && buffer.len() >= feat_bytes_64 && buffer.len() - feat_bytes_64 >= byte_cursor {
+            buffer.len() - feat_bytes_64
+        } else if feature_count > 0 && buffer.len() >= feat_bytes_32 && buffer.len() - feat_bytes_32 >= byte_cursor {
+            buffer.len() - feat_bytes_32
+        } else {
+            buffer.len()
+        };
+
+        let region_bytes = vertex_count * 8;
+        let region_slice = if byte_cursor + region_bytes <= feat_start {
+            let s = &buffer[byte_cursor..byte_cursor + region_bytes];
+            byte_cursor += region_bytes;
             Some(s)
         } else {
             None
@@ -98,16 +119,8 @@ impl I3SGeometryDecoder {
         let mut face_ranges = Vec::with_capacity(feature_count);
 
         if feature_count > 0 && byte_cursor < buffer.len() {
-            // In I3S specification, per-feature attributes (featureId and faceRange)
-            // reside at the tail of the geometry buffer. If there are optional vertex
-            // attributes between colors and features (such as uvRegion in textured layers),
-            // align cursor to the feature table start.
-            let feat_bytes_64 = feature_count * 16;
-            let feat_bytes_32 = feature_count * 12;
-            if buffer.len() >= feat_bytes_64 && buffer.len() - feat_bytes_64 >= byte_cursor {
-                byte_cursor = buffer.len() - feat_bytes_64;
-            } else if buffer.len() >= feat_bytes_32 && buffer.len() - feat_bytes_32 >= byte_cursor {
-                byte_cursor = buffer.len() - feat_bytes_32;
+            if byte_cursor < feat_start {
+                byte_cursor = feat_start;
             }
 
             let remaining_bytes = buffer.len() - byte_cursor;
@@ -157,6 +170,7 @@ impl I3SGeometryDecoder {
         let mut positions = Vec::with_capacity(vertex_count);
         let mut normals = Vec::with_capacity(vertex_count);
         let mut uvs = Vec::with_capacity(vertex_count);
+        let mut colors = Vec::with_capacity(vertex_count);
         let mut indices = Vec::with_capacity(vertex_count);
 
         let mut min_enu = Vec3::splat(f32::INFINITY);
@@ -193,12 +207,26 @@ impl I3SGeometryDecoder {
             positions.push([enu.x, enu.y, enu.z]);
 
             // 2. Normal vector (default to Up if not provided)
+            // In the OGC I3S specification, vertex normals are defined in Earth-Centered Earth-Fixed (ECEF) coordinates.
+            // We transform them to local topocentric East-North-Up (ENU) Engine space: +X = East, +Y = Up, -Z = North.
             if let Some(ns) = norm_slice {
                 let n_offset = i * 12;
                 let nx = ns.get(n_offset..n_offset + 4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(0.0);
                 let ny = ns.get(n_offset + 4..n_offset + 8).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(1.0);
                 let nz = ns.get(n_offset + 8..n_offset + 12).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(0.0);
-                normals.push([nx, nz, -ny]); // Orient to engine Y-up
+
+                let lat_rad = (lat as f64).to_radians();
+                let lon_rad = (lon as f64).to_radians();
+                let sin_lat = lat_rad.sin() as f32;
+                let cos_lat = lat_rad.cos() as f32;
+                let sin_lon = lon_rad.sin() as f32;
+                let cos_lon = lon_rad.cos() as f32;
+
+                let east = -sin_lon * nx + cos_lon * ny;
+                let north = -sin_lat * cos_lon * nx - sin_lat * sin_lon * ny + cos_lat * nz;
+                let up = cos_lat * cos_lon * nx + cos_lat * sin_lon * ny + sin_lat * nz;
+
+                normals.push([east, up, -north]);
             } else {
                 normals.push([0.0, 1.0, 0.0]);
             }
@@ -208,12 +236,42 @@ impl I3SGeometryDecoder {
                 let u_offset = i * 8;
                 let u = us.get(u_offset..u_offset + 4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(0.0);
                 let v = us.get(u_offset + 4..u_offset + 8).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(0.0);
-                uvs.push([u, v]);
+
+                if let Some(rs) = region_slice {
+                    let r_offset = i * 8;
+                    let u_min = rs.get(r_offset..r_offset + 2).and_then(|s| s.try_into().ok()).map(u16::from_le_bytes).unwrap_or(0) as f32 / 65535.0;
+                    let v_min = rs.get(r_offset + 2..r_offset + 4).and_then(|s| s.try_into().ok()).map(u16::from_le_bytes).unwrap_or(0) as f32 / 65535.0;
+                    let u_max = rs.get(r_offset + 4..r_offset + 6).and_then(|s| s.try_into().ok()).map(u16::from_le_bytes).unwrap_or(65535) as f32 / 65535.0;
+                    let v_max = rs.get(r_offset + 6..r_offset + 8).and_then(|s| s.try_into().ok()).map(u16::from_le_bytes).unwrap_or(65535) as f32 / 65535.0;
+
+                    let u_frac = u.rem_euclid(1.0);
+                    // I3S uses OpenGL UV convention (V=0 at bottom); WebGPU uses V=0 at top.
+                    // Flip V within [0,1] before remapping into the atlas sub-region.
+                    let v_frac = 1.0 - v.rem_euclid(1.0);
+                    let final_u = u_frac * (u_max - u_min) + u_min;
+                    // Atlas region v_min/v_max are also in OpenGL space (v_min < v_max, bottom-up).
+                    // After flipping v_frac, map into the flipped region so the sub-image is right-side up.
+                    let final_v = 1.0 - (v_frac * (v_max - v_min) + v_min);
+                    uvs.push([final_u, final_v]);
+                } else {
+                    // No region: simply flip V for OpenGL → WebGPU convention
+                    uvs.push([u, 1.0 - v]);
+                }
             } else {
                 uvs.push([0.0, 0.0]);
             }
 
-            // 4. Globe ECEF coordinates
+            // 4. Color attribute
+            if let Some(cs) = col_slice {
+                let c_offset = i * 4;
+                let r = cs.get(c_offset).copied().unwrap_or(255) as f32 / 255.0;
+                let g = cs.get(c_offset + 1).copied().unwrap_or(255) as f32 / 255.0;
+                let b = cs.get(c_offset + 2).copied().unwrap_or(255) as f32 / 255.0;
+                let a = cs.get(c_offset + 3).copied().unwrap_or(255) as f32 / 255.0;
+                colors.push([r, g, b, a]);
+            }
+
+            // 5. Globe ECEF coordinates
             let ecef = crate::gis::crs::geodetic_to_ecef(&GeoCoord::new(lat, lon, elev));
             min_ecef = min_ecef.min(ecef);
             max_ecef = max_ecef.max(ecef);
@@ -235,6 +293,11 @@ impl I3SGeometryDecoder {
                     let feat_positions = positions[start_v..end_v].to_vec();
                     let feat_normals = normals[start_v..end_v].to_vec();
                     let feat_uvs = uvs[start_v..end_v].to_vec();
+                    let feat_colors = if colors.len() == positions.len() {
+                        colors[start_v..end_v].to_vec()
+                    } else {
+                        Vec::new()
+                    };
                     let feat_indices = (0..(end_v - start_v) as u32).collect();
 
                     let mut f_min = Vec3::splat(f32::INFINITY);
@@ -258,7 +321,7 @@ impl I3SGeometryDecoder {
                             positions: feat_positions,
                             normals: feat_normals,
                             uvs: feat_uvs,
-                            colors: Vec::new(),
+                            colors: feat_colors,
                             indices: feat_indices,
                         },
                         aabb_min: f_min,
@@ -284,7 +347,7 @@ impl I3SGeometryDecoder {
                     positions: positions.clone(),
                     normals: normals.clone(),
                     uvs: uvs.clone(),
-                    colors: Vec::new(),
+                    colors: colors.clone(),
                     indices: indices.clone(),
                 },
                 aabb_min: min_enu,
@@ -302,7 +365,7 @@ impl I3SGeometryDecoder {
                 positions,
                 normals,
                 uvs,
-                colors: Vec::new(),
+                colors,
                 indices,
             },
             features,
@@ -310,6 +373,7 @@ impl I3SGeometryDecoder {
             aabb_enu: (min_enu, max_enu),
             aabb_ecef: (min_ecef, max_ecef),
             base_color,
+            image_rgba: None,
         })
     }
 }

@@ -12,8 +12,19 @@ use web_time::Instant;
 use super::spec::*;
 use super::decoder::*;
 
+#[derive(Debug, Clone)]
+pub struct I3SWorkTask {
+    pub node_id: u32,
+    pub geom_url: String,
+    pub texture_info: Option<(String, u32)>,
+    pub geom_info: I3SGeometryInfo,
+    pub geom_buf_def: Option<I3SGeometryBufferDef>,
+    pub obb_center: [f64; 3],
+    pub base_color: [f32; 4],
+}
+
 pub struct I3SWorkQueue {
-    pub pending_geometries: Vec<(u32, String, I3SGeometryInfo, Option<I3SGeometryBufferDef>, [f64; 3], [f32; 4])>,
+    pub pending_geometries: Vec<I3SWorkTask>,
     pub in_flight: usize,
     pub is_shutdown: bool,
 }
@@ -149,7 +160,15 @@ impl I3SManager {
                         }
                     };
 
-                    let (node_id, url, geom_info, geom_buf_def, obb_center, base_color) = task;
+                    let I3SWorkTask {
+                        node_id,
+                        geom_url,
+                        texture_info,
+                        geom_info,
+                        geom_buf_def,
+                        obb_center,
+                        base_color,
+                    } = task;
 
                     // Read the current scene origin (set by the main thread via set_origin)
                     let origin = match origin_arc.lock() {
@@ -157,15 +176,36 @@ impl I3SManager {
                         Err(_) => break,
                     };
 
-                    let service_slug = crate::gis::cache::DiskCacheManager::service_to_slug(&url);
+                    let service_slug = crate::gis::cache::DiskCacheManager::service_to_slug(&geom_url);
                     let mut bytes = crate::gis::cache::DiskCacheManager::read_i3s_geometry(&service_slug, geom_info.resource);
 
                     if bytes.is_none() {
-                        if let Ok(resp) = agent.get(&url).call() {
+                        if let Ok(resp) = agent.get(&geom_url).call() {
                             let mut downloaded = Vec::new();
                             if resp.into_reader().read_to_end(&mut downloaded).is_ok() {
                                 crate::gis::cache::DiskCacheManager::write_i3s_geometry(&service_slug, geom_info.resource, &downloaded);
                                 bytes = Some(downloaded);
+                            }
+                        }
+                    }
+
+                    // Optional texture downloading & decoding
+                    let mut image_rgba = None;
+                    if let Some((ref tex_url, tex_res_id)) = texture_info {
+                        let mut tex_bytes = crate::gis::cache::DiskCacheManager::read_i3s_texture(&service_slug, tex_res_id);
+                        if tex_bytes.is_none() {
+                            if let Ok(resp) = agent.get(tex_url).call() {
+                                let mut downloaded = Vec::new();
+                                if resp.into_reader().read_to_end(&mut downloaded).is_ok() {
+                                    crate::gis::cache::DiskCacheManager::write_i3s_texture(&service_slug, tex_res_id, &downloaded);
+                                    tex_bytes = Some(downloaded);
+                                }
+                            }
+                        }
+                        if let Some(tb) = tex_bytes {
+                            if let Ok(dyn_img) = image::load_from_memory(&tb) {
+                                let rgba = dyn_img.to_rgba8();
+                                image_rgba = Some(Arc::new((rgba.width(), rgba.height(), rgba.into_raw())));
                             }
                         }
                     }
@@ -183,6 +223,7 @@ impl I3SManager {
                             base_color,
                         ) {
                             decoded.node_id = node_id;
+                            decoded.image_rgba = image_rgba;
                             let _ = tx.send(I3SDownloadResult::Geometry(Box::new(decoded)));
                             success = true;
                         }
@@ -526,9 +567,12 @@ impl I3SManager {
                     let (center_enu, axes, half_size) = obb.to_engine_obb(origin);
                     let radius = obb.radius() as f32;
 
-                    // Exact frustum culling: sphere early-out + exact OBB separating axis test (no loose distance bypass).
-                    // Root node (index 0) always passes so the hierarchy can be traversed.
+                    // Near-field frustum culling bypass:
+                    // If camera is close to or inside the bounding sphere (dist <= radius * 1.25),
+                    // near-plane clipping must NOT cull the node, preventing building facades from disappearing!
+                    let dist_to_eye = (center_enu - camera_eye).length();
                     let in_frustum = node.index == 0
+                        || dist_to_eye <= radius * 1.25
                         || (frustum.intersects_sphere(center_enu, radius) && frustum.intersects_obb(center_enu, axes, half_size));
 
                     (in_frustum, center_enu, radius)
@@ -583,12 +627,17 @@ impl I3SManager {
 
             if wants_split && has_children {
                 if let Some(ref children_list) = children {
+                    let mut all_children_ready = true;
+                    let mut in_frustum_children_count = 0;
+
                     for &child_id in children_list {
                         let child_in_frustum = if let Some(cn) = self.node_cache.get(&child_id) {
                             if let Some(obb) = &cn.obb {
                                 let (c_enu, axes, half_size) = obb.to_engine_obb(origin);
                                 let r = obb.radius() as f32;
-                                frustum.intersects_sphere(c_enu, r) && frustum.intersects_obb(c_enu, axes, half_size)
+                                let c_dist = (c_enu - camera_eye).length();
+                                c_dist <= r * 1.25
+                                    || (frustum.intersects_sphere(c_enu, r) && frustum.intersects_obb(c_enu, axes, half_size))
                             } else {
                                 true
                             }
@@ -597,15 +646,37 @@ impl I3SManager {
                         };
 
                         if child_in_frustum {
+                            in_frustum_children_count += 1;
                             let child_page = child_id / nodes_per_page;
                             if !self.cached_pages.contains(&child_page) {
                                 self.fetch_node_page(child_page);
                             }
+
+                            // Check if child node has loaded its mesh (if it has one)
+                            let child_ready = if let Some(cn) = self.node_cache.get(&child_id) {
+                                if cn.mesh.is_some() {
+                                    self.loaded_node_ids.contains(&child_id)
+                                } else {
+                                    true
+                                }
+                            } else {
+                                false
+                            };
+
+                            if !child_ready {
+                                all_children_ready = false;
+                            }
+
                             queue.push_back(child_id);
                         }
                     }
 
-                    // Directly load what is required: do NOT keep parent as fallback!
+                    // HLOD Fallback: If this parent node has a mesh already in GPU memory,
+                    // and its refined children are still streaming, keep the parent drawn
+                    // to prevent buildings from disappearing!
+                    if has_mesh && self.loaded_node_ids.contains(&node_id) && (!all_children_ready || in_frustum_children_count == 0) {
+                        raw_selected.push(node_id);
+                    }
                 }
             } else if has_mesh {
                 // Target leaf / required LOD node
@@ -663,13 +734,18 @@ impl I3SManager {
         }
 
         // Prune out-of-view tasks from work queue
-        queue.pending_geometries.retain(|(id, _, _, _, _, _)| needed.contains(id));
+        queue.pending_geometries.retain(|task| needed.contains(&task.node_id));
 
         // Keep requested_node_ids in sync so pruned tasks can be re-requested when camera returns
         self.requested_node_ids.retain(|id| self.loaded_node_ids.contains(id) || needed.contains(id));
 
         let available_slots = Self::MAX_PENDING_QUEUE.saturating_sub(queue.pending_geometries.len());
         let mut newly_enqueued = 0;
+
+        let has_textures = self.layer_metadata.as_ref()
+            .and_then(|m| m.texture_set_definitions.as_ref())
+            .map(|defs| !defs.is_empty())
+            .unwrap_or(false);
 
         for &node_id in &needed {
             if newly_enqueued >= available_slots {
@@ -687,17 +763,36 @@ impl I3SManager {
                                     .cloned();
 
                                 let url = format!("{}/layers/0/nodes/{}/geometries/0", self.service_url, geom_info.resource);
-                                let base_color = [1.0, 1.0, 1.0, 1.0];
+                                let base_color = self.layer_metadata.as_ref()
+                                    .and_then(|m| m.material_definitions.as_ref())
+                                    .and_then(|defs| {
+                                        let mat_idx = mesh.material.as_ref().map(|mat| mat.definition).unwrap_or(0);
+                                        defs.get(mat_idx)
+                                    })
+                                    .and_then(|mat_def| mat_def.pbr_metallic_roughness.as_ref())
+                                    .and_then(|pbr| pbr.base_color_factor)
+                                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+
+                                let texture_info = if has_textures {
+                                    mesh.material.as_ref().map(|mat| {
+                                        let mat_res = mat.resource.unwrap_or(geom_info.resource);
+                                        let tex_url = format!("{}/layers/0/nodes/{}/textures/0", self.service_url, mat_res);
+                                        (tex_url, mat_res)
+                                    })
+                                } else {
+                                    None
+                                };
 
                                 self.requested_node_ids.insert(node_id);
-                                queue.pending_geometries.push((
+                                queue.pending_geometries.push(I3SWorkTask {
                                     node_id,
-                                    url,
-                                    geom_info.clone(),
+                                    geom_url: url,
+                                    texture_info,
+                                    geom_info: geom_info.clone(),
                                     geom_buf_def,
-                                    obb.center,
+                                    obb_center: obb.center,
                                     base_color,
-                                ));
+                                });
                                 newly_enqueued += 1;
                             }
                         }
@@ -729,10 +824,18 @@ impl I3SManager {
             drop(queue);
 
             for task in tasks_to_dispatch {
-                let (node_id, url, geom_info, geom_buf_def, obb_center, base_color) = task;
+                let I3SWorkTask {
+                    node_id,
+                    geom_url,
+                    texture_info,
+                    geom_info,
+                    geom_buf_def,
+                    obb_center,
+                    base_color,
+                } = task;
                 let tx_clone = tx.clone();
                 let q_clone = q_arc.clone();
-                crate::gis::platform::http::fetch_bytes(&url, move |res| {
+                crate::gis::platform::http::fetch_bytes(&geom_url, move |res| {
                     if let Ok(mut g) = q_clone.lock() {
                         g.in_flight = g.in_flight.saturating_sub(1);
                     }
@@ -749,7 +852,20 @@ impl I3SManager {
                         ) {
                             Ok(mut decoded) => {
                                 decoded.node_id = node_id;
-                                let _ = tx_clone.send(I3SDownloadResult::Geometry(Box::new(decoded)));
+                                if let Some((tex_url, _)) = texture_info {
+                                    let tx_final = tx_clone.clone();
+                                    crate::gis::platform::http::fetch_bytes(&tex_url, move |tex_res| {
+                                        if let Ok(tb) = tex_res {
+                                            if let Ok(dyn_img) = image::load_from_memory(&tb) {
+                                                let rgba = dyn_img.to_rgba8();
+                                                decoded.image_rgba = Some(std::sync::Arc::new((rgba.width(), rgba.height(), rgba.into_raw())));
+                                            }
+                                        }
+                                        let _ = tx_final.send(I3SDownloadResult::Geometry(Box::new(decoded)));
+                                    });
+                                } else {
+                                    let _ = tx_clone.send(I3SDownloadResult::Geometry(Box::new(decoded)));
+                                }
                             }
                             Err(err) => {
                                 log::warn!("[I3S] Failed to decode I3S node {}: {}", node_id, err);

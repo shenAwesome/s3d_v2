@@ -1,3 +1,4 @@
+// S3D Core GPU Pipelines & Shader Module
 use crate::renderer::mesh::Vertex;
 use bytemuck::{Pod, Zeroable};
 

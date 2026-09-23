@@ -374,10 +374,13 @@ fn fs_screen_line(in: VertexOutput) -> FragmentOutput {
 
 @fragment
 fn fs_threedtile(in: VertexOutput) -> FragmentOutput {
-    let N = normalize(in.world_normal);
-    let L = normalize(light.sun_dir.xyz);
     let V = normalize(camera.eye_pos.xyz - in.world_pos);
+    // Use faceForward to handle I3S / glTF meshes whose normals may point inward
+    // (CW-wound geometry from outside): always orient the normal toward the camera so
+    // both lighting and the implicit backface test work correctly for any winding order.
+    let N = faceForward(normalize(in.world_normal), -V, normalize(in.world_normal));
 
+    let L = normalize(light.sun_dir.xyz);
     let is_daylight = light.sun_dir.w;
 
     // Diffuse lighting
@@ -405,7 +408,7 @@ fn fs_threedtile(in: VertexOutput) -> FragmentOutput {
     let is_custom_shadow_tile = max(abs(shadow.color.r - 0.10), max(abs(shadow.color.g - 0.12), abs(shadow.color.b - 0.18))) > 0.04;
     let neutral_shadow_tint_tile = vec3<f32>(0.85, 0.87, 0.90);
     let ambient_tint = mix(select(neutral_shadow_tint_tile, shadow.color * 4.0, is_custom_shadow_tile), vec3<f32>(1.0, 1.0, 1.0), shadow.visibility);
-    let ambient = light.ambient_color.rgb * max(light.ambient_color.a, 0.55) * sky_factor * shadow_ambient_factor * ambient_tint;
+    let ambient = light.ambient_color.rgb * max(light.ambient_color.a, 0.65) * sky_factor * shadow_ambient_factor * ambient_tint;
     let custom_shadow_tint = shadow.color * (1.0 - shadow.visibility) * select(0.0, 0.45, is_custom_shadow_tile);
 
     // 3D Tiles / glTF PBR Diffuse Shading:
@@ -672,10 +675,11 @@ fn fs_ground(in: VertexOutput) -> FragmentOutput {
 
     let daylight_mult = clamp(is_daylight, 0.0, 1.0);
     let direct_sun = light.sun_color.rgb * light.sun_color.a * n_dot_l * shadow.visibility * daylight_mult;
-    let shadow_ambient_factor = mix(0.65, 1.0, shadow.visibility);
+    let shadow_ambient_factor = mix(0.70, 1.0, shadow.visibility);
     let is_custom_shadow_plane = max(abs(shadow.color.r - 0.10), max(abs(shadow.color.g - 0.12), abs(shadow.color.b - 0.18))) > 0.04;
-    let ambient_tint = mix(shadow.color * select(2.8, 4.0, is_custom_shadow_plane), vec3<f32>(1.0, 1.0, 1.0), shadow.visibility);
-    let ambient = light.ambient_color.rgb * max(light.ambient_color.a, 0.50) * shadow_ambient_factor * ambient_tint;
+    let neutral_shadow_tint_plane = vec3<f32>(0.85, 0.87, 0.90);
+    let ambient_tint = mix(select(neutral_shadow_tint_plane, shadow.color * 4.0, is_custom_shadow_plane), vec3<f32>(1.0, 1.0, 1.0), shadow.visibility);
+    let ambient = light.ambient_color.rgb * max(light.ambient_color.a, 0.55) * shadow_ambient_factor * ambient_tint;
     let custom_shadow_tint = shadow.color * (1.0 - shadow.visibility) * select(0.0, 0.45, is_custom_shadow_plane);
 
     let lit_rgb = grid_color.rgb * (ambient + direct_sun) + custom_shadow_tint;
@@ -750,10 +754,11 @@ fn fs_basemap(in: VertexOutput) -> FragmentOutput {
 
     let daylight_mult = clamp(is_daylight, 0.0, 1.0);
     let direct_sun = light.sun_color.rgb * light.sun_color.a * n_dot_l * shadow.visibility * daylight_mult;
-    let shadow_ambient_factor = mix(0.55, 1.0, shadow.visibility);
+    let shadow_ambient_factor = mix(0.78, 1.0, shadow.visibility);
     let is_custom_shadow_base = max(abs(shadow.color.r - 0.10), max(abs(shadow.color.g - 0.12), abs(shadow.color.b - 0.18))) > 0.04;
-    let ambient_tint = mix(shadow.color * select(2.8, 4.0, is_custom_shadow_base), vec3<f32>(1.0, 1.0, 1.0), shadow.visibility);
-    let ambient = light.ambient_color.rgb * max(light.ambient_color.a, 0.50) * shadow_ambient_factor * ambient_tint;
+    let neutral_shadow_tint_base = vec3<f32>(0.92, 0.93, 0.95);
+    let ambient_tint = mix(select(neutral_shadow_tint_base, shadow.color * 4.0, is_custom_shadow_base), vec3<f32>(1.0, 1.0, 1.0), shadow.visibility);
+    let ambient = light.ambient_color.rgb * max(light.ambient_color.a, 0.65) * shadow_ambient_factor * ambient_tint;
     let custom_shadow_tint = shadow.color * (1.0 - shadow.visibility) * select(0.0, 0.45, is_custom_shadow_base);
 
     let lit_rgb = base_color.rgb * (ambient + direct_sun) + custom_shadow_tint;
