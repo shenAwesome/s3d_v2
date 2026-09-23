@@ -524,7 +524,8 @@ impl RenderEngine {
             } else {
                 None
             };
-            self.update_tile_terrain_mesh(coord, origin, Some(terrain), terrain_tile.as_ref(), terrain.height_exaggeration);
+            let terrain_opt = if terrain.is_enabled { Some(terrain) } else { None };
+            self.update_tile_terrain_mesh(coord, origin, terrain_opt, terrain_tile.as_ref(), terrain.height_exaggeration);
         }
     }
 

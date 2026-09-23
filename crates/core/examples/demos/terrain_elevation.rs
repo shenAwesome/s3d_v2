@@ -8,7 +8,7 @@ use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapResponse;
 use s3d_core::gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
 use s3d_core::gis::map::Basemap;
-use s3d_core::gis::terrain::AwsTerrain;
+use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, Terrain};
 
 pub struct TerrainElevationDemo {
     exaggeration: f32,
@@ -48,6 +48,23 @@ impl Demo for TerrainElevationDemo {
     }
 
     fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
+        let mut changed = false;
+
+        ui.label("DEM Provider:");
+        let is_aws = matches!(engine.terrain, Some(Terrain::Aws(_)));
+        let is_esri = matches!(engine.terrain, Some(Terrain::Esri(_)));
+
+        if ui.selectable_label(is_aws, "AWS Terrarium").clicked() && !is_aws {
+            engine.terrain = Some(AwsTerrain::new().with_exaggeration(self.exaggeration).into());
+            changed = true;
+        }
+        if ui.selectable_label(is_esri, "Esri Terrain3D").clicked() && !is_esri {
+            engine.terrain = Some(EsriTerrain::new().with_exaggeration(self.exaggeration).into());
+            changed = true;
+        }
+
+        ui.separator();
+
         ui.label("Exaggeration:");
         // Height exaggeration slider (0.5× – 3.0×)
         if ui.add(
@@ -56,10 +73,10 @@ impl Demo for TerrainElevationDemo {
             if let Some(terrain) = &mut engine.terrain {
                 terrain.set_exaggeration(self.exaggeration);
             }
-            engine.map.ground.elevation_exaggeration = self.exaggeration;
-            return true;
+            changed = true;
         }
-        false
+
+        changed
     }
 
     fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {

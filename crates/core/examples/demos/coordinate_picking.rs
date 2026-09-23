@@ -10,6 +10,7 @@ use s3d_core::engine::widget::MapResponse;
 use s3d_core::engine::GoToOptions;
 use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectionMode};
+use s3d_core::gis::terrain::AwsTerrain;
 
 pub struct CoordinatePickingDemo {
     picked_geo: Option<GeoCoord>,
@@ -40,7 +41,9 @@ impl Demo for CoordinatePickingDemo {
         engine.goto([144.9631, -37.8136], GoToOptions::immediate().with_distance(2500.0).with_tilt(45.0));
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, _engine: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
+        let mut changed = false;
+
         // Display picked coordinates, or prompt to click
         if let Some(geo) = self.picked_geo {
             ui.label(
@@ -55,7 +58,20 @@ impl Demo for CoordinatePickingDemo {
                     .color(egui::Color32::GRAY),
             );
         }
-        false
+
+        ui.separator();
+
+        let mut terrain_enabled = engine.terrain.is_some();
+        if ui.checkbox(&mut terrain_enabled, "3D Terrain").changed() {
+            if terrain_enabled {
+                engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
+            } else {
+                engine.terrain = None;
+            }
+            changed = true;
+        }
+
+        changed
     }
 
     fn on_map_response(&mut self, response: &MapResponse, engine: &mut MapEngine) {

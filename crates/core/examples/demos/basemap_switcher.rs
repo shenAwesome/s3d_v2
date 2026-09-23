@@ -18,20 +18,16 @@ use s3d_core::engine::widget::MapResponse;
 use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectOrigin};
 use s3d_core::gis::map::Basemap;
-use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, TerrainProvider};
+use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, Terrain};
 
 pub struct BasemapSwitcherDemo {
     selected_basemap: BasemapProvider,
-    terrain_enabled: bool,
-    selected_terrain: TerrainProvider,
 }
 
 impl BasemapSwitcherDemo {
     pub fn new() -> Self {
         Self {
             selected_basemap: BasemapProvider::OpenStreetMap,
-            terrain_enabled: false,
-            selected_terrain: TerrainProvider::AwsTerrarium,
         }
     }
 }
@@ -51,8 +47,6 @@ impl Demo for BasemapSwitcherDemo {
 
         // Terrain is disabled (None) by default:
         engine.terrain = None;
-        self.terrain_enabled = false;
-        self.selected_terrain = TerrainProvider::AwsTerrarium;
 
         // Position camera with an oblique perspective to showcase 3D terrain relief
         engine.goto(
@@ -98,12 +92,10 @@ impl Demo for BasemapSwitcherDemo {
         ui.separator();
 
         // 3D Terrain DEM toggle
-        if ui.checkbox(&mut self.terrain_enabled, "Terrain").changed() {
-            if self.terrain_enabled {
-                engine.terrain = match self.selected_terrain {
-                    TerrainProvider::AwsTerrarium => Some(AwsTerrain::new().with_exaggeration(1.5).into()),
-                    TerrainProvider::EsriTerrain3D => Some(EsriTerrain::new().with_exaggeration(1.5).into()),
-                };
+        let mut terrain_enabled = engine.terrain.is_some();
+        if ui.checkbox(&mut terrain_enabled, "Terrain").changed() {
+            if terrain_enabled {
+                engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
             } else {
                 engine.terrain = None;
             }
@@ -111,26 +103,23 @@ impl Demo for BasemapSwitcherDemo {
         }
 
         // Show active terrain source & allow switching terrain provider
-        if self.terrain_enabled {
+        if engine.terrain.is_some() {
             ui.label("DEM:");
-            if ui.selectable_label(
-                self.selected_terrain == TerrainProvider::AwsTerrarium,
-                "AWS Terrarium (RGB PNG)",
-            )
-            .on_hover_text("AWS Open Data Terrarium: 256×256 RGB PNG\nURL: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png")
-            .clicked() && self.selected_terrain != TerrainProvider::AwsTerrarium {
-                self.selected_terrain = TerrainProvider::AwsTerrarium;
+            let is_aws = matches!(engine.terrain, Some(Terrain::Aws(_)));
+            let is_esri = matches!(engine.terrain, Some(Terrain::Esri(_)));
+
+            if ui.selectable_label(is_aws, "AWS Terrarium (RGB PNG)")
+                .on_hover_text("AWS Open Data Terrarium: 256×256 RGB PNG\nURL: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png")
+                .clicked() && !is_aws
+            {
                 engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
                 changed = true;
             }
 
-            if ui.selectable_label(
-                self.selected_terrain == TerrainProvider::EsriTerrain3D,
-                "Esri Terrain3D (LERC)",
-            )
-            .on_hover_text("Esri WorldElevation3D: 257×257 LERC Float32\nURL: https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer")
-            .clicked() && self.selected_terrain != TerrainProvider::EsriTerrain3D {
-                self.selected_terrain = TerrainProvider::EsriTerrain3D;
+            if ui.selectable_label(is_esri, "Esri Terrain3D (LERC)")
+                .on_hover_text("Esri WorldElevation3D: 257×257 LERC Float32\nURL: https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer")
+                .clicked() && !is_esri
+            {
                 engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.5).into());
                 changed = true;
             }

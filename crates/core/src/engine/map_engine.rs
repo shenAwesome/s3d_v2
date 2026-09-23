@@ -418,9 +418,6 @@ impl MapEngine {
 
     /// Per-frame update: advances flight transitions, updates streaming data, syncs solar position
     pub fn update(&mut self, dt: f32) {
-        // 0. Synchronize terrain if modified
-        self.sync_terrain_if_changed();
-
         // 1. Advance camera smooth damping
         if self.camera.update_smooth_zoom(dt) {
             self.events.push(MapEvent::CameraMoved);
@@ -520,7 +517,7 @@ impl MapEngine {
                         tile,
                         &self.scene.origin,
                         self.basemap.opacity,
-                        Some(&self.terrain_mgr),
+                        if self.terrain_mgr.is_enabled { Some(&self.terrain_mgr) } else { None },
                         terrain_tile.as_ref(),
                         self.terrain_mgr.height_exaggeration,
                     );
@@ -529,22 +526,24 @@ impl MapEngine {
                     }
                 }
 
-                for terrain_tile in &new_terrain_tiles {
-                    let affected_coords: Vec<crate::gis::basemap::TileCoord> = renderer
-                        .gpu_tiles
-                        .keys()
-                        .copied()
-                        .filter(|c| c == &terrain_tile.coord || c.is_descendant_of(&terrain_tile.coord) || terrain_tile.coord.is_descendant_of(c))
-                        .collect();
-                    for aff in affected_coords {
-                        let aff_terrain = self.terrain_mgr.get_terrain_for_tile(aff);
-                        renderer.update_tile_terrain_mesh(
-                            aff,
-                            &self.scene.origin,
-                            Some(&self.terrain_mgr),
-                            aff_terrain.as_ref(),
-                            self.terrain_mgr.height_exaggeration,
-                        );
+                if self.terrain_mgr.is_enabled {
+                    for terrain_tile in &new_terrain_tiles {
+                        let affected_coords: Vec<crate::gis::basemap::TileCoord> = renderer
+                            .gpu_tiles
+                            .keys()
+                            .copied()
+                            .filter(|c| c == &terrain_tile.coord || c.is_descendant_of(&terrain_tile.coord) || terrain_tile.coord.is_descendant_of(c))
+                            .collect();
+                        for aff in affected_coords {
+                            let aff_terrain = self.terrain_mgr.get_terrain_for_tile(aff);
+                            renderer.update_tile_terrain_mesh(
+                                aff,
+                                &self.scene.origin,
+                                Some(&self.terrain_mgr),
+                                aff_terrain.as_ref(),
+                                self.terrain_mgr.height_exaggeration,
+                            );
+                        }
                     }
                 }
 
