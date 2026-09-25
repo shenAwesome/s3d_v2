@@ -3,7 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
-use crate::gis::basemap::{BasemapProvider, TileCoord};
+use crate::gis::basemap::{Basemap, TileCoord};
 use crate::gis::terrain::TerrainProvider;
 
 // ----------------------------------------------------
@@ -128,13 +128,13 @@ impl DiskCacheManager {
     }
 
     /// Cache file path for a basemap tile: .cache/basemap/{provider_id}/{z}/{x}_{y}.bin
-    pub fn basemap_tile_path(provider: BasemapProvider, coord: TileCoord) -> PathBuf {
-        let prov_str = match provider {
-            BasemapProvider::OpenStreetMap => "osm",
-            BasemapProvider::EsriStreet => "esri_street",
-            BasemapProvider::EsriTopo => "esri_topo",
-            BasemapProvider::EsriImagery => "esri_imagery",
-            BasemapProvider::None => "none",
+    pub fn basemap_tile_path(basemap: &Basemap, coord: TileCoord) -> PathBuf {
+        let prov_str = match basemap {
+            Basemap::OpenStreetMap => "osm",
+            Basemap::EsriStreet => "esri_street",
+            Basemap::EsriTopo => "esri_topo",
+            Basemap::EsriImagery => "esri_imagery",
+            Basemap::Custom { .. } => "custom",
         };
         Self::get_basemap_cache_root()
             .join(prov_str)
@@ -158,29 +158,29 @@ impl DiskCacheManager {
 
     #[cfg(not(target_arch = "wasm32"))]
     /// Read basemap tile from disk cache if present
-    pub fn read_basemap_tile(provider: BasemapProvider, coord: TileCoord) -> Option<Vec<u8>> {
+    pub fn read_basemap_tile(basemap: &Basemap, coord: TileCoord) -> Option<Vec<u8>> {
         if !Self::CACHE_READ_ENABLED {
             return None;
         }
-        let path = Self::basemap_tile_path(provider, coord);
+        let path = Self::basemap_tile_path(basemap, coord);
         fs::read(path).ok()
     }
     #[cfg(target_arch = "wasm32")]
-    pub fn read_basemap_tile(_provider: BasemapProvider, _coord: TileCoord) -> Option<Vec<u8>> {
+    pub fn read_basemap_tile(_basemap: &Basemap, _coord: TileCoord) -> Option<Vec<u8>> {
         None
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     /// Write basemap tile raw bytes to disk cache
-    pub fn write_basemap_tile(provider: BasemapProvider, coord: TileCoord, data: &[u8]) {
-        let path = Self::basemap_tile_path(provider, coord);
+    pub fn write_basemap_tile(basemap: &Basemap, coord: TileCoord, data: &[u8]) {
+        let path = Self::basemap_tile_path(basemap, coord);
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         let _ = fs::write(path, data);
     }
     #[cfg(target_arch = "wasm32")]
-    pub fn write_basemap_tile(_provider: BasemapProvider, _coord: TileCoord, _data: &[u8]) {}
+    pub fn write_basemap_tile(_basemap: &Basemap, _coord: TileCoord, _data: &[u8]) {}
 
     #[cfg(not(target_arch = "wasm32"))]
     /// Read terrain DEM tile from disk cache if present

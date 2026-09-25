@@ -26,7 +26,7 @@ pub const MAX_VIEWPORT_HEIGHT: u32 = 1440;
 
 pub struct GpuTile {
     pub coord: TileCoord,
-    pub provider: crate::gis::basemap::BasemapProvider,
+    pub has_texture: bool,
     pub width: u32,
     pub height: u32,
     pub mesh: GpuMesh,
@@ -593,8 +593,8 @@ impl RenderEngine {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let grid_mode = if tile.provider == crate::gis::basemap::BasemapProvider::None { 1.0 } else { self.current_basemap_grid_mode };
-        let tile_opacity = if tile.provider == crate::gis::basemap::BasemapProvider::None { opacity } else { self.current_basemap_opacity.max(opacity) };
+        let grid_mode = if !tile.has_texture { 1.0 } else { self.current_basemap_grid_mode };
+        let tile_opacity = if !tile.has_texture { opacity } else { self.current_basemap_opacity.max(opacity) };
         let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Basemap Tile Uniform Buffer"),
             contents: bytemuck::bytes_of(&BasemapUniformGpu {
@@ -649,12 +649,12 @@ impl RenderEngine {
             }
         }
 
-        let provider = tile.provider;
+        let has_texture = tile.has_texture;
         self.gpu_tiles.insert(
             tile.coord,
             GpuTile {
                 coord: tile.coord,
-                provider,
+                has_texture,
                 width: tile.width,
                 height: tile.height,
                 mesh,
@@ -710,13 +710,13 @@ impl RenderEngine {
         self.current_basemap_grid_mode = grid_mode;
         self.current_basemap_debug_borders = debug_border;
         for tile in self.gpu_tiles.values() {
-            let actual_grid_mode = if tile.provider == crate::gis::basemap::BasemapProvider::None {
+            let actual_grid_mode = if !tile.has_texture {
                 1.0
             } else {
                 grid_mode
             };
             let uniform = BasemapUniformGpu {
-                opacity: if tile.provider == crate::gis::basemap::BasemapProvider::None { 1.0 } else { opacity },
+                opacity: if !tile.has_texture { 1.0 } else { opacity },
                 brightness: 1.0,
                 grid_mode: actual_grid_mode,
                 debug_border: if debug_border { 1.0 } else { 0.0 },

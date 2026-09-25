@@ -1,5 +1,5 @@
 use glam::Vec3;
-use crate::gis::basemap::BasemapProvider;
+use crate::gis::basemap::Basemap;
 use crate::gis::crs::GeoCoord;
 use crate::gis::layer::{FeatureLayer, LayerDescriptor};
 use crate::engine::map_engine::{GoToOptions, GoToTarget};
@@ -35,10 +35,9 @@ pub enum LayerCommand {
 }
 
 /// Sub-commands for basemap raster tile streaming
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BasemapCommand {
-    SetProvider(BasemapProvider),
-    SetEnabled(bool),
+    Set(Option<Basemap>),
     ResetCache,
 }
 

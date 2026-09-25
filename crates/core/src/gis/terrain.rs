@@ -725,8 +725,8 @@ impl TerrainManager {
                     self.tile_cache.insert(coord, arc_tile.clone());
                     new_tiles.push(arc_tile);
                 }
-                TerrainDownloadResult::Failure(coord) => {
-                    self.requested_tiles.remove(&coord);
+                TerrainDownloadResult::Failure(_coord) => {
+                    // Retain in requested_tiles to prevent continuous re-request loops on 404/network errors
                 }
             }
         }

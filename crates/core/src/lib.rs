@@ -24,7 +24,7 @@ pub mod spatial;
 
 // Convenient top-level re-exports
 pub use engine::{
-    GoToOptions, GoToTarget, IntoGoToOptions, MapCommand, MapEngine, MapEvent, MapView,
+    GoToOptions, GoToTarget, IntoGoToOptions, Map, MapCommand, MapEngine, MapEvent, MapView,
 };
 #[cfg(feature = "egui")]
 pub use engine::{MapResponse, MapWidget};
@@ -32,13 +32,13 @@ pub use engine::{MapResponse, MapWidget};
 pub use gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
 pub use gis::layer::{
     ElevationFormat, ElevationLayer, ElevationMode, FeatureLayer, GraphicsLayer,
-    GroupLayer, IntegratedMeshLayer, Layer, LayerTrait, LayerType, LoadStatus,
+    GroupLayer, IntegratedMeshLayer, IntoLayer, Layer, LayerTrait, LayerType, LoadStatus,
     SceneLayer, SimpleFeatureLayer, TileLayer,
 };
-pub use gis::map::{Basemap, Ground, LayerCollection, Map, MapBuilder, Table, TableCollection, ViewingMode};
+pub use gis::map::{Basemap, Ground, LayerCollection, Table, TableCollection, ViewingMode};
 pub use gis::graphic::Graphic;
 pub use gis::renderer::Renderer;
-pub use gis::basemap::{BasemapManager, BasemapProvider};
+pub use gis::basemap::BasemapManager;
 pub use gis::terrain::{
     AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D,
     TerrariumTerrain, Terrain, TerrainManager, TerrainProvider, TerrainShadingMode,

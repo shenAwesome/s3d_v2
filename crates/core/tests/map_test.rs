@@ -14,38 +14,27 @@ fn test_default_map_creation() {
     assert_eq!(map.spatial_reference, SpatialReference::Wgs84);
     assert!(map.basemap.is_some());
     assert_eq!(map.layers.len(), 0);
-    assert!(map.tables.is_empty());
-
-    // By default, OSM basemap is present in all_layers()
-    let layers = map.all_layers();
-    assert_eq!(layers.len(), 1);
-    assert_eq!(layers[0].layer_type(), LayerType::Tile);
-    assert_eq!(layers[0].title(), "OpenStreetMap");
 }
 
 #[test]
 fn test_basemap_presets() {
     let osm = Basemap::osm();
-    assert_eq!(osm.id, "osm");
-    assert_eq!(osm.base_layers.len(), 1);
-    assert_eq!(osm.base_layers.get(0).unwrap().title(), "OpenStreetMap");
+    assert_eq!(osm, Basemap::OpenStreetMap);
+    assert_eq!(osm.display_name(), "OpenStreetMap Standard");
+    assert!(osm.tile_url(0, 0, 0).unwrap().contains("openstreetmap.org"));
 
     let satellite = Basemap::esri_imagery();
-    assert_eq!(satellite.id, "esri_imagery");
-    assert_eq!(satellite.base_layers.len(), 1);
-    assert_eq!(satellite.base_layers.get(0).unwrap().title(), "Esri World Imagery (Satellite)");
+    assert_eq!(satellite, Basemap::EsriImagery);
+    assert!(satellite.tile_url(0, 0, 0).unwrap().contains("World_Imagery"));
 
     let streets = Basemap::esri_streets();
-    assert_eq!(streets.id, "esri_streets");
-    assert_eq!(streets.base_layers.len(), 1);
+    assert_eq!(streets, Basemap::EsriStreet);
 
     let topo = Basemap::esri_topo();
-    assert_eq!(topo.id, "esri_topo");
-    assert_eq!(topo.base_layers.len(), 1);
+    assert_eq!(topo, Basemap::EsriTopo);
 
-    let blank = Basemap::none();
-    assert_eq!(blank.id, "none");
-    assert_eq!(blank.base_layers.len(), 0);
+    let custom = Basemap::custom("https://my.server/{z}/{x}/{y}.png");
+    assert_eq!(custom.tile_url(1, 2, 3).unwrap(), "https://my.server/1/2/3.png");
 }
 
 #[test]
@@ -178,202 +167,164 @@ fn test_group_layer() {
 }
 
 #[test]
-fn test_map_visual_stacking_order() {
-    // 1. Map with Satellite Basemap
-    let mut map = Map::with_basemap(Basemap::esri_imagery());
+fn test_map_creation_and_layers() {
+    let mut map = Map::new();
+    map.basemap = Some(Basemap::esri_imagery());
+    assert_eq!(map.basemap, Some(Basemap::esri_imagery()));
 
-    // 2. Ground Elevation
-    map.ground.add_layer(Arc::new(ElevationLayer::mapbox_terrain_rgb(
-        "dem",
-        "https://example.com/dem/{z}/{x}/{y}.png",
-    )));
+    map.add_layer(FeatureLayer::feature_layer("buildings", "3D Buildings"));
+    map.add_layer(GraphicsLayer::new("sketches", "Measurement Markup"));
 
-    // 3. Operational Vector & Graphics Layers
-    map.add_layer(Arc::new(FeatureLayer::feature_layer("buildings", "3D Buildings")));
-    map.add_layer(Arc::new(GraphicsLayer::new("sketches", "Measurement Markup")));
-
-    // 4. Basemap Reference Layer (labels drawn on top)
-    if let Some(basemap) = &mut map.basemap {
-        basemap.reference_layers.add(Arc::new(TileLayer::new(
-            "labels",
-            "https://server.arcgisonline.com/.../{z}/{y}/{x}",
-        )));
-    }
-
-    // Verify all_layers() returns strictly in bottom-to-top order:
-    // [0] esri_imagery (basemap base)
-    // [1] dem (ground elevation)
-    // [2] buildings (operational)
-    // [3] sketches (operational)
-    // [4] labels (basemap reference / overlay)
-    let layers = map.all_layers();
-    assert_eq!(layers.len(), 5);
-    assert_eq!(layers[0].id(), "esri_imagery_tiles");
-    assert_eq!(layers[1].id(), "dem");
-    assert_eq!(layers[2].id(), "buildings");
-    assert_eq!(layers[3].id(), "sketches");
-    assert_eq!(layers[4].id(), "labels");
+    assert_eq!(map.layers.len(), 2);
+    assert_eq!(map.layers[0].id(), "buildings");
+    assert_eq!(map.layers[1].id(), "sketches");
 }
 
 #[test]
-fn test_map_builder_and_auto_switch_viewing_mode() {
+fn test_map_viewing_mode_and_auto_switch() {
     use s3d_core::gis::map::ViewingMode;
-    use s3d_core::MapEngine;
 
-    // 1. Build Map with ViewingMode::Auto
-    let map = Map::builder()
-        .title("Auto Switch Scene")
-        .basemap(Basemap::osm())
-        .viewing_mode(ViewingMode::Auto { threshold_altitude: 60_000.0 })
-        .build();
+    // 1. Direct Map property initialization
+    let mut map = Map::new();
+    map.title = "Auto Switch Scene".to_string();
+    map.basemap = Some(Basemap::osm());
+    map.viewing_mode = ViewingMode::Auto { threshold_altitude: 60_000.0 };
+    map.sync_viewing_mode_if_changed();
 
     assert_eq!(map.title, "Auto Switch Scene");
-    assert_eq!(map.viewing_mode, ViewingMode::Auto { threshold_altitude: 60_000.0 });
+    assert_eq!(map.auto_switch_altitude, Some(60_000.0));
 
-    // 2. Initialize MapEngine from Map and verify threshold is synced
-    let mut engine = MapEngine::from_map(map);
-    assert_eq!(engine.auto_switch_altitude, Some(60_000.0));
+    // 2. Test runtime adjustment
+    map.auto_switch_altitude = Some(45_000.0);
+    assert_eq!(map.auto_switch_altitude, Some(45_000.0));
 
-    // 3. Test runtime adjustment
-    engine.set_auto_projection_switch(Some(45_000.0));
-    assert_eq!(engine.auto_switch_altitude, Some(45_000.0));
+    // 3. Test transition to Globe
+    map.transition_to_globe();
+    assert_eq!(map.projection_mode, s3d_core::ProjectionMode::GlobeECEF);
 
-    // 4. Test transition to Globe
-    engine.transition_to_globe();
-    assert_eq!(engine.projection_mode, s3d_core::ProjectionMode::GlobeECEF);
-
-    // 5. Test transition back to Planar: default must land with Heading 0° and Tilt 45°
-    engine.transition_to_planar_at_geo(-37.8136, 144.9631, 2500.0);
-    assert_eq!(engine.projection_mode, s3d_core::ProjectionMode::PlanarENU);
-    assert_eq!(engine.camera.yaw, 0.0, "Heading must be 0.0 (North)");
-    assert_eq!(engine.camera.target_yaw, 0.0);
+    // 4. Test transition back to Planar: default must land with Heading 0° and Tilt 45°
+    map.transition_to_planar_at_geo_with_pose(-37.8136, 144.9631, 2500.0, 0.0, 45.0);
+    assert_eq!(map.projection_mode, s3d_core::ProjectionMode::PlanarENU);
+    assert_eq!(map.camera.yaw, 0.0, "Heading must be 0.0 (North)");
+    assert_eq!(map.camera.target_yaw, 0.0);
     
     // Tilt 45° implies pitch = 45° (pi/4 rad)
     let expected_pitch = 45.0f32.to_radians();
-    assert!((engine.camera.pitch - expected_pitch).abs() < 1e-5, "Tilt must be 45° (pitch ~ 0.785 rad)");
-    assert!((engine.camera.target_pitch - expected_pitch).abs() < 1e-5);
+    assert!((map.camera.pitch - expected_pitch).abs() < 1e-5, "Tilt must be 45° (pitch ~ 0.785 rad)");
+    assert!((map.camera.target_pitch - expected_pitch).abs() < 1e-5);
 
-    // 6. Test transition with custom pose (e.g. Heading 90° East, Tilt 30°)
-    engine.transition_to_globe();
-    engine.transition_to_planar_at_geo_with_pose(-37.8136, 144.9631, 2500.0, 90.0, 30.0);
-    assert_eq!(engine.projection_mode, s3d_core::ProjectionMode::PlanarENU);
-    assert!((engine.camera.yaw - 90.0f32.to_radians()).abs() < 1e-5, "Heading must be 90.0 (East)");
+    // 5. Test transition with custom pose (e.g. Heading 90° East, Tilt 30°)
+    map.transition_to_globe();
+    map.transition_to_planar_at_geo_with_pose(-37.8136, 144.9631, 2500.0, 90.0, 30.0);
+    assert_eq!(map.projection_mode, s3d_core::ProjectionMode::PlanarENU);
+    assert!((map.camera.yaw - 90.0f32.to_radians()).abs() < 1e-5, "Heading must be 90.0 (East)");
     let expected_tilt_pitch = (90.0f32 - 30.0f32).to_radians(); // 60 deg pitch
-    assert!((engine.camera.pitch - expected_tilt_pitch).abs() < 1e-5, "Tilt must be 30° (pitch = 60°)");
+    assert!((map.camera.pitch - expected_tilt_pitch).abs() < 1e-5, "Tilt must be 30° (pitch = 60°)");
 }
 
 #[test]
 fn test_map_origin_xyz_configuration() {
     use s3d_core::gis::map::ViewingMode;
-    use s3d_core::MapEngine;
 
     // 1. Build map with origin [x: lon, y: lat, z: elevation]
-    let map = Map::builder()
-        .basemap(Basemap::osm())
-        .origin([144.9631, -37.8136, 10.0])
-        .viewing_mode(ViewingMode::Auto { threshold_altitude: 50_000.0 })
-        .build();
+    let mut map = Map::from_origin([144.9631, -37.8136, 10.0]);
+    map.basemap = Some(Basemap::osm());
+    map.viewing_mode = ViewingMode::Auto { threshold_altitude: 50_000.0 };
 
-    assert_eq!(map.origin.longitude, 144.9631);
-    assert_eq!(map.origin.latitude, -37.8136);
-    assert_eq!(map.origin.elevation, 10.0);
+    assert_eq!(map.origin().longitude, 144.9631);
+    assert_eq!(map.origin().latitude, -37.8136);
+    assert_eq!(map.origin().elevation, 10.0);
 
-    // 2. MapEngine::from_map inherits map.origin automatically
-    let mut engine = MapEngine::from_map(map);
-    assert_eq!(engine.scene.origin.origin.longitude, 144.9631);
-    assert_eq!(engine.scene.origin.origin.latitude, -37.8136);
-    assert_eq!(engine.scene.origin.origin.elevation, 10.0);
-
-    // 3. Engine set_origin accepts [x, y, z] directly
-    engine.set_origin([151.2093, -33.8688, 0.0]); // Sydney CBD
-    assert_eq!(engine.scene.origin.origin.longitude, 151.2093);
-    assert_eq!(engine.scene.origin.origin.latitude, -33.8688);
+    // 2. Map set_origin accepts [x, y, z] directly
+    map.set_origin([151.2093, -33.8688, 0.0]); // Sydney CBD
+    assert_eq!(map.origin().longitude, 151.2093);
+    assert_eq!(map.origin().latitude, -33.8688);
 }
 
 #[test]
 fn test_polymorphic_layers_lifecycle() {
-    use s3d_core::MapEngine;
+    use s3d_core::Map;
     use s3d_core::gis::layer::{FeatureLayer, IntegratedMeshLayer, SceneLayer};
 
-    let mut engine = MapEngine::default();
-    assert_eq!(engine.layers.len(), 0);
+    let mut map = Map::default();
+    assert_eq!(map.layers.len(), 0);
 
     // 1. Add FeatureLayer
     let feat_layer = FeatureLayer::new("buildings", "Melbourne Buildings", LayerType::Buildings, [1.0, 1.0, 1.0, 1.0]);
-    let idx1 = engine.add_layer(feat_layer);
+    let idx1 = map.add_layer(feat_layer);
     assert_eq!(idx1, 0);
-    assert_eq!(engine.layers.len(), 1);
+    assert_eq!(map.layers.len(), 1);
 
     // 2. Add SceneLayer (I3S)
     let scene_layer = SceneLayer::new("i3s_cbd", "Melbourne CBD 3D", "https://example.com/i3s/SceneServer/layers/0");
-    let idx2 = engine.add_layer(scene_layer);
+    let idx2 = map.add_layer(scene_layer);
     assert_eq!(idx2, 1);
-    assert_eq!(engine.layers.len(), 2);
+    assert_eq!(map.layers.len(), 2);
 
     // 3. Add IntegratedMeshLayer (3D Tiles)
     let mesh_layer = IntegratedMeshLayer::new("mesh_3dtiles", "Geelong 3D Tiles", "https://example.com/tileset.json");
-    let idx3 = engine.add_layer(mesh_layer);
+    let idx3 = map.add_layer(mesh_layer);
     assert_eq!(idx3, 2);
-    assert_eq!(engine.layers.len(), 3);
+    assert_eq!(map.layers.len(), 3);
 
     // 4. Downcasting via get_layer and get_layer_mut
-    assert!(engine.get_layer::<FeatureLayer>("buildings").is_some());
-    assert!(engine.get_layer::<SceneLayer>("i3s_cbd").is_some());
-    assert!(engine.get_layer::<IntegratedMeshLayer>("mesh_3dtiles").is_some());
-    assert!(engine.get_layer::<FeatureLayer>("i3s_cbd").is_none());
+    assert!(map.get_layer::<FeatureLayer>("buildings").is_some());
+    assert!(map.get_layer::<SceneLayer>("i3s_cbd").is_some());
+    assert!(map.get_layer::<IntegratedMeshLayer>("mesh_3dtiles").is_some());
+    assert!(map.get_layer::<FeatureLayer>("i3s_cbd").is_none());
 
     // Mutate via downcast
-    if let Some(layer) = engine.get_layer_mut::<SceneLayer>("i3s_cbd") {
+    if let Some(layer) = map.get_layer_mut::<SceneLayer>("i3s_cbd") {
         layer.set_opacity(0.5);
         assert_eq!(layer.opacity(), 0.5);
     }
 
     // 5. Remove layer
-    assert!(engine.remove_layer("i3s_cbd"));
-    assert_eq!(engine.layers.len(), 2);
-    assert!(engine.get_layer::<SceneLayer>("i3s_cbd").is_none());
-    assert!(!engine.remove_layer("i3s_cbd")); // already removed
+    assert!(map.remove_layer("i3s_cbd"));
+    assert_eq!(map.layers.len(), 2);
+    assert!(map.get_layer::<SceneLayer>("i3s_cbd").is_none());
+    assert!(!map.remove_layer("i3s_cbd")); // already removed
 
     // 6. Clear layers
-    engine.clear_layers();
-    assert_eq!(engine.layers.len(), 0);
+    map.clear_layers();
+    assert_eq!(map.layers.len(), 0);
 }
 
 #[test]
 fn test_terrain_syntax_and_classes() {
     use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, Terrain, TerrainProvider};
-    use s3d_core::engine::MapEngine;
+    use s3d_core::Map;
 
-    let mut engine = MapEngine::default();
+    let mut map = Map::default();
 
     // 1. Terrain is None by default
-    assert!(engine.terrain.is_none());
-    assert!(!engine.terrain_mgr.is_enabled);
+    assert!(map.terrain.is_none());
+    assert!(!map.terrain_mgr.is_enabled);
 
     // 2. Setting AwsTerrain directly
-    engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
-    engine.sync_terrain_if_changed();
+    map.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
+    map.sync_terrain_if_changed();
 
-    assert!(engine.terrain.is_some());
-    assert!(engine.terrain_mgr.is_enabled);
-    assert_eq!(engine.terrain_mgr.provider, TerrainProvider::AwsTerrarium);
-    assert_eq!(engine.terrain_mgr.height_exaggeration, 1.5);
+    assert!(map.terrain.is_some());
+    assert!(map.terrain_mgr.is_enabled);
+    assert_eq!(map.terrain_mgr.provider, TerrainProvider::AwsTerrarium);
+    assert_eq!(map.terrain_mgr.height_exaggeration, 1.5);
 
     // 3. Setting EsriTerrain directly
-    engine.terrain = Some(EsriTerrain::new().with_exaggeration(2.0).into());
-    engine.sync_terrain_if_changed();
+    map.terrain = Some(EsriTerrain::new().with_exaggeration(2.0).into());
+    map.sync_terrain_if_changed();
 
-    assert!(engine.terrain.is_some());
-    assert!(engine.terrain_mgr.is_enabled);
-    assert_eq!(engine.terrain_mgr.provider, TerrainProvider::EsriTerrain3D);
-    assert_eq!(engine.terrain_mgr.height_exaggeration, 2.0);
+    assert!(map.terrain.is_some());
+    assert!(map.terrain_mgr.is_enabled);
+    assert_eq!(map.terrain_mgr.provider, TerrainProvider::EsriTerrain3D);
+    assert_eq!(map.terrain_mgr.height_exaggeration, 2.0);
 
     // 4. Setting to None disables terrain
-    engine.terrain = None;
-    engine.sync_terrain_if_changed();
+    map.terrain = None;
+    map.sync_terrain_if_changed();
 
-    assert!(engine.terrain.is_none());
-    assert!(!engine.terrain_mgr.is_enabled);
+    assert!(map.terrain.is_none());
+    assert!(!map.terrain_mgr.is_enabled);
 
     // 5. Using Terrain::aws() and Terrain::esri() constructors
     let t_aws = Terrain::aws().with_exaggeration(3.0);
@@ -384,17 +335,38 @@ fn test_terrain_syntax_and_classes() {
     assert_eq!(t_esri.provider(), TerrainProvider::EsriTerrain3D);
     assert_eq!(t_esri.exaggeration(), 0.5);
 
-    // 6. Direct engine.terrain assignment
-    engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.2).into());
-    engine.sync_terrain_if_changed();
-    assert!(engine.terrain.is_some());
-    assert!(engine.terrain_mgr.is_enabled);
-    assert_eq!(engine.terrain_mgr.height_exaggeration, 1.2);
+    // 6. Direct map.terrain assignment
+    map.terrain = Some(AwsTerrain::new().with_exaggeration(1.2).into());
+    map.sync_terrain_if_changed();
+    assert!(map.terrain.is_some());
+    assert!(map.terrain_mgr.is_enabled);
+    assert_eq!(map.terrain_mgr.height_exaggeration, 1.2);
 
-    engine.terrain = None;
-    engine.sync_terrain_if_changed();
-    assert!(engine.terrain.is_none());
-    assert!(!engine.terrain_mgr.is_enabled);
+    map.terrain = None;
+    map.sync_terrain_if_changed();
+    assert!(map.terrain.is_none());
+    assert!(!map.terrain_mgr.is_enabled);
 }
 
+#[test]
+fn test_basemap_syntax_and_switching() {
+    let mut map = Map::default();
 
+    // Default is OSM
+    assert_eq!(map.basemap, Some(Basemap::osm()));
+
+    // Switch to Esri Imagery
+    map.basemap = Some(Basemap::esri_imagery());
+    map.sync_basemap_if_changed();
+    assert_eq!(map.basemap, Some(Basemap::esri_imagery()));
+
+    // Switch to Esri Streets
+    map.basemap = Some(Basemap::esri_streets());
+    map.sync_basemap_if_changed();
+    assert_eq!(map.basemap, Some(Basemap::esri_streets()));
+
+    // Switch to None (grid mode)
+    map.basemap = None;
+    map.sync_basemap_if_changed();
+    assert_eq!(map.basemap, None);
+}

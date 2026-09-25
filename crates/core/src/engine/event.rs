@@ -14,8 +14,8 @@ pub enum MapEvent {
     FeatureSelected(Option<GisFeature>),
     /// Camera view, position, or orientation changed
     CameraMoved,
-    /// Active basemap provider changed
-    BasemapProviderChanged(crate::gis::basemap::BasemapProvider),
+    /// Active basemap changed
+    BasemapChanged(Option<crate::gis::basemap::Basemap>),
     /// 3D terrain elevation toggled
     TerrainToggled(bool),
     /// Project geographic origin changed

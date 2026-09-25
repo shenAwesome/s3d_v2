@@ -92,7 +92,7 @@ impl ShowcaseApp {
         cc.egui_ctx.set_theme(egui::Theme::Dark);
 
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        let mut engine = MapEngine::new(ProjectOrigin::from_geo(melbourne));
+        let mut engine = s3d_core::Map::from_origin(ProjectOrigin::from_geo(melbourne));
 
         // Default camera
         engine.goto(
@@ -182,13 +182,18 @@ impl eframe::App for ShowcaseApp {
             }
         }
 
-        // Request repaint when streaming or animating
+        // Request immediate repaint when animating or when new tiles/meshes need rendering.
+        // When background network streaming is in-flight, poll with relaxed timer (50ms)
+        // instead of an unconstrained 144Hz busy-loop. When idle, no repaint is requested (0% CPU).
+
         if self.engine.camera.is_animating()
+            || self.engine.active_globe_flight.is_some()
             || self.engine.has_new_gpu_tiles
-            || self.engine.basemap.has_unconsumed_completed()
-            || self.engine.is_streaming()
+            || self.engine.has_unconsumed_completed()
         {
             ctx.request_repaint();
+        } else if self.engine.is_streaming() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
 
         // --- Top Bar: Example Selector + Demo Controls ---
@@ -282,7 +287,7 @@ impl eframe::App for ShowcaseApp {
                                 .font(egui::TextStyle::Monospace)
                                 .text_color(egui::Color32::from_rgb(226, 232, 240))
                                 .desired_width(f32::INFINITY)
-                                .lock_focus(true),
+                                .interactive(false),
                         );
                     });
             });

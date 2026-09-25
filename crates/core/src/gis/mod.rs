@@ -46,13 +46,13 @@ pub use symbol::{
 // Esri-aligned Layers
 pub use layer::{
     ElevationFormat, ElevationLayer, ElevationMode, FeatureLayer, GraphicsLayer,
-    GroupLayer, IntegratedMeshLayer, Layer, LayerColorMode, LayerDescriptor,
+    GroupLayer, IntegratedMeshLayer, IntoLayer, Layer, LayerColorMode, LayerDescriptor,
     LayerFactory, LayerRegistry, LayerSource, LayerStatus, LayerTrait, LayerType,
     LoadStatus, SceneLayer, SimpleFeatureLayer, TileLayer, DEFAULT_SHADOW_COLOR,
 };
 
 // Esri-aligned Map Document Model
-pub use map::{Basemap, Ground, LayerCollection, Map, MapBuilder, Table, TableCollection, ViewingMode};
+pub use map::{Basemap, Ground, LayerCollection, Map, Table, TableCollection, ViewingMode};
 
 pub use source::{
     RequestHandle, Source, SourceCaps, SourceId, SourceKind, SourceRegistry, TileKey, TileScheme,

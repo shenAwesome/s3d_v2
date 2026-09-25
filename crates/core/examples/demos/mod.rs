@@ -5,7 +5,7 @@
 //! displays the **exact source** that is running — zero drift possible.
 
 use egui;
-use s3d_core::engine::map_engine::MapEngine;
+use s3d_core::Map;
 use s3d_core::engine::widget::MapResponse;
 
 // Individual demo modules — one file per demo
@@ -35,12 +35,12 @@ pub trait Demo {
     /// One-line description shown below the code panel title.
     fn description(&self) -> &'static str;
     /// Called once when this demo is selected. Set up map state here.
-    fn setup(&mut self, engine: &mut MapEngine);
+    fn setup(&mut self, map: &mut Map);
     /// Called every frame in the top bar for demo-specific controls.
     /// Return `true` if state changed and a repaint is needed.
-    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool;
+    fn controls(&mut self, ui: &mut egui::Ui, map: &mut Map) -> bool;
     /// Called every frame after `MapWidget::show()`, for click/pick handlers.
-    fn on_map_response(&mut self, response: &MapResponse, engine: &mut MapEngine);
+    fn on_map_response(&mut self, response: &MapResponse, map: &mut Map);
 }
 
 /// A registered demo entry bundling the live demo + its source code.

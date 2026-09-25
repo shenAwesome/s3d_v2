@@ -5,12 +5,10 @@
 //! coordinates (latitude, longitude) on click.
 
 use super::Demo;
-use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapResponse;
-use s3d_core::engine::GoToOptions;
-use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectionMode};
 use s3d_core::gis::terrain::AwsTerrain;
+use s3d_core::{Basemap, GoToOptions, Map};
 
 pub struct CoordinatePickingDemo {
     picked_geo: Option<GeoCoord>,
@@ -29,19 +27,18 @@ impl Demo for CoordinatePickingDemo {
         "Raycasting screen cursor position to geographic WGS84 coordinates on click."
     }
 
-    fn setup(&mut self, engine: &mut MapEngine) {
+    fn setup(&mut self, map: &mut Map) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        engine.set_origin(melbourne);
-        engine.projection_mode = ProjectionMode::PlanarENU;
-        engine.basemap.is_enabled = true;
-        engine.basemap.provider = BasemapProvider::OpenStreetMap;
+        map.set_origin(melbourne);
+        map.projection_mode = ProjectionMode::PlanarENU;
+        map.basemap = Some(Basemap::osm());
 
         self.picked_geo = None;
 
-        engine.goto([144.9631, -37.8136], GoToOptions::immediate().with_distance(2500.0).with_tilt(45.0));
+        map.goto([144.9631, -37.8136], GoToOptions::immediate().with_distance(2500.0).with_tilt(45.0));
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, map: &mut Map) -> bool {
         let mut changed = false;
 
         // Display picked coordinates, or prompt to click
@@ -61,12 +58,12 @@ impl Demo for CoordinatePickingDemo {
 
         ui.separator();
 
-        let mut terrain_enabled = engine.terrain.is_some();
+        let mut terrain_enabled = map.terrain.is_some();
         if ui.checkbox(&mut terrain_enabled, "3D Terrain").changed() {
             if terrain_enabled {
-                engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
+                map.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
             } else {
-                engine.terrain = None;
+                map.terrain = None;
             }
             changed = true;
         }
@@ -74,13 +71,13 @@ impl Demo for CoordinatePickingDemo {
         changed
     }
 
-    fn on_map_response(&mut self, response: &MapResponse, engine: &mut MapEngine) {
+    fn on_map_response(&mut self, response: &MapResponse, map: &mut Map) {
         // Convert clicked world point to WGS84 geographic coordinates
         if let Some(world_pt) = response.clicked_world_point {
-            self.picked_geo = if engine.projection_mode == ProjectionMode::GlobeECEF {
+            self.picked_geo = if map.projection_mode == ProjectionMode::GlobeECEF {
                 Some(s3d_core::gis::crs::ecef_to_geodetic(world_pt))
             } else {
-                Some(engine.scene.origin.local_to_geo(world_pt))
+                Some(map.scene.origin.local_to_geo(world_pt))
             };
         }
     }

@@ -29,29 +29,24 @@ impl<'a> MapWidget<'a> {
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> MapResponse {
-        self.engine.show_ui(ui)
+        self.engine.show(ui)
     }
 }
 
 #[cfg(feature = "egui")]
 impl<'a> egui::Widget for MapWidget<'a> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        self.engine.show_ui(ui).response
+        self.engine.show(ui).response
     }
 }
 
 #[cfg(feature = "egui")]
 impl MapEngine {
-    /// Convenient shorthand to render the map directly into an egui container.
-    ///
-    /// Shorthand for `MapWidget::new(&mut map).show(ui)`.
+    /// Renders the Map canvas widget inside the given egui::Ui container.
     pub fn show(&mut self, ui: &mut egui::Ui) -> MapResponse {
-        self.show_ui(ui)
-    }
-
-    /// Renders the MapEngine canvas widget inside the given egui::Ui container.
-    pub fn show_ui(&mut self, ui: &mut egui::Ui) -> MapResponse {
+        self.sync_viewing_mode_if_changed();
         self.sync_terrain_if_changed();
+        self.sync_basemap_if_changed();
 
         let available_size = ui.available_size();
         let width = (available_size.x.floor() as u32).max(64);
@@ -96,12 +91,15 @@ impl MapEngine {
             &self.solar_pos,
             &dummy_measurement,
             &dummy_toolbox,
-            self.basemap.is_enabled || self.terrain_mgr.is_enabled,
-            self.basemap.zoom,
+            self.basemap_mgr.is_enabled || self.terrain_mgr.is_enabled,
+            self.basemap_mgr.zoom,
             self.sun_intensity,
             self.ambient_intensity,
             self.sunlight_enabled,
         );
+
+        // Mark all newly uploaded GPU tiles and meshes as consumed and rendered
+        self.has_new_gpu_tiles = false;
 
         // 2. Allocate Canvas Rect in egui
         let (rect, response) = ui.allocate_exact_size(

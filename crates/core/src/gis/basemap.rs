@@ -10,71 +10,97 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 /// Supported Basemap Services
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BasemapProvider {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Basemap {
     OpenStreetMap,
     EsriStreet,
     EsriTopo,
     EsriImagery,
-    None,
+    Custom { url_template: String },
 }
 
-impl Default for BasemapProvider {
+impl Default for Basemap {
     fn default() -> Self {
         Self::OpenStreetMap
     }
 }
 
-impl BasemapProvider {
-    pub fn all() -> &'static [BasemapProvider] {
+impl Basemap {
+    pub fn osm() -> Self {
+        Self::OpenStreetMap
+    }
+
+    pub fn esri_imagery() -> Self {
+        Self::EsriImagery
+    }
+
+    pub fn esri_streets() -> Self {
+        Self::EsriStreet
+    }
+
+    pub fn esri_topo() -> Self {
+        Self::EsriTopo
+    }
+
+    pub fn custom(url_template: impl Into<String>) -> Self {
+        Self::Custom {
+            url_template: url_template.into(),
+        }
+    }
+
+    pub fn all() -> &'static [Basemap] {
         &[
-            BasemapProvider::OpenStreetMap,
-            BasemapProvider::EsriStreet,
-            BasemapProvider::EsriTopo,
-            BasemapProvider::EsriImagery,
-            BasemapProvider::None,
+            Basemap::OpenStreetMap,
+            Basemap::EsriStreet,
+            Basemap::EsriTopo,
+            Basemap::EsriImagery,
         ]
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            BasemapProvider::OpenStreetMap => "OpenStreetMap Standard",
-            BasemapProvider::EsriStreet => "Esri World Streets",
-            BasemapProvider::EsriTopo => "Esri World Topo",
-            BasemapProvider::EsriImagery => "Esri World Imagery (Satellite)",
-            BasemapProvider::None => "None (CAD Grid)",
+            Basemap::OpenStreetMap => "OpenStreetMap Standard",
+            Basemap::EsriStreet => "Esri World Streets",
+            Basemap::EsriTopo => "Esri World Topo",
+            Basemap::EsriImagery => "Esri World Imagery (Satellite)",
+            Basemap::Custom { .. } => "Custom Basemap",
         }
     }
 
     pub fn tile_url(&self, z: u32, x: u32, y: u32) -> Option<String> {
         match self {
-            BasemapProvider::OpenStreetMap => Some(format!(
+            Basemap::OpenStreetMap => Some(format!(
                 "https://tile.openstreetmap.org/{}/{}/{}.png",
                 z, x, y
             )),
-            BasemapProvider::EsriStreet => Some(format!(
+            Basemap::EsriStreet => Some(format!(
                 "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{}/{}/{}",
                 z, y, x
             )),
-            BasemapProvider::EsriTopo => Some(format!(
+            Basemap::EsriTopo => Some(format!(
                 "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{}/{}/{}",
                 z, y, x
             )),
-            BasemapProvider::EsriImagery => Some(format!(
+            Basemap::EsriImagery => Some(format!(
                 "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{}/{}/{}",
                 z, y, x
             )),
-            BasemapProvider::None => None,
+            Basemap::Custom { url_template } => Some(
+                url_template
+                    .replace("{z}", &z.to_string())
+                    .replace("{x}", &x.to_string())
+                    .replace("{y}", &y.to_string()),
+            ),
         }
     }
 
     pub fn attribution(&self) -> &'static str {
         match self {
-            BasemapProvider::OpenStreetMap => "© OpenStreetMap contributors",
-            BasemapProvider::EsriImagery | BasemapProvider::EsriTopo | BasemapProvider::EsriStreet => {
+            Basemap::OpenStreetMap => "© OpenStreetMap contributors",
+            Basemap::EsriImagery | Basemap::EsriTopo | Basemap::EsriStreet => {
                 "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics"
             }
-            BasemapProvider::None => "",
+            Basemap::Custom { .. } => "",
         }
     }
 }
@@ -257,7 +283,8 @@ impl TileCoord {
 #[derive(Clone, Debug)]
 pub struct DecodedTile {
     pub coord: TileCoord,
-    pub provider: BasemapProvider,
+    pub basemap: Basemap,
+    pub has_texture: bool,
     pub width: u32,
     pub height: u32,
     pub rgba_bytes: Vec<u8>,
@@ -267,7 +294,8 @@ impl DecodedTile {
     pub fn dummy(coord: TileCoord) -> Self {
         Self {
             coord,
-            provider: BasemapProvider::None,
+            basemap: Basemap::OpenStreetMap,
+            has_texture: false,
             width: 2,
             height: 2,
             rgba_bytes: vec![128, 128, 128, 255, 128, 128, 128, 255, 128, 128, 128, 255, 128, 128, 128, 255],
@@ -278,8 +306,8 @@ impl DecodedTile {
 /// In-memory host CPU RAM tile cache (LRU) holding decoded raster RGBA images.
 /// Lives strictly in system memory (RAM heap) with ZERO GPU VRAM allocation!
 pub struct TileRamCache {
-    entries: std::collections::HashMap<(TileCoord, BasemapProvider), DecodedTile>,
-    order: std::collections::VecDeque<(TileCoord, BasemapProvider)>,
+    entries: std::collections::HashMap<(TileCoord, Basemap), DecodedTile>,
+    order: std::collections::VecDeque<(TileCoord, Basemap)>,
     capacity: usize,
 }
 
@@ -292,8 +320,8 @@ impl TileRamCache {
         }
     }
 
-    pub fn get(&mut self, coord: TileCoord, provider: BasemapProvider) -> Option<DecodedTile> {
-        let key = (coord, provider);
+    pub fn get(&mut self, coord: TileCoord, basemap: &Basemap) -> Option<DecodedTile> {
+        let key = (coord, basemap.clone());
         if let Some(tile) = self.entries.get(&key) {
             let tile = tile.clone();
             if let Some(pos) = self.order.iter().position(|k| k == &key) {
@@ -306,12 +334,12 @@ impl TileRamCache {
         }
     }
 
-    pub fn contains(&self, coord: TileCoord, provider: BasemapProvider) -> bool {
-        self.entries.contains_key(&(coord, provider))
+    pub fn contains(&self, coord: TileCoord, basemap: &Basemap) -> bool {
+        self.entries.contains_key(&(coord, basemap.clone()))
     }
 
     pub fn insert(&mut self, tile: DecodedTile) {
-        let key = (tile.coord, tile.provider);
+        let key = (tile.coord, tile.basemap.clone());
         if self.entries.contains_key(&key) {
             if let Some(pos) = self.order.iter().position(|k| k == &key) {
                 self.order.remove(pos);
@@ -321,7 +349,7 @@ impl TileRamCache {
                 self.entries.remove(&oldest_key);
             }
         }
-        self.order.push_back(key);
+        self.order.push_back(key.clone());
         self.entries.insert(key, tile);
     }
 
@@ -337,13 +365,13 @@ impl TileRamCache {
 
 pub enum TileDownloadResult {
     Success(DecodedTile, u64 /* epoch */),
-    Failure(TileCoord, BasemapProvider, u64 /* epoch */),
+    Failure(TileCoord, Basemap, u64 /* epoch */),
 }
 
 #[derive(Debug, Clone)]
 pub struct TileDownloadTask {
     pub coord: TileCoord,
-    pub provider: BasemapProvider,
+    pub basemap: Basemap,
     pub url: String,
     pub priority: i32, // Higher number = higher priority
     pub epoch: u64,    // cache generation; tiles from stale epochs are discarded on drain
@@ -353,7 +381,7 @@ pub struct TileDownloadTask {
 
 pub struct TileWorkQueue {
     pub tasks: Vec<TileDownloadTask>,
-    pub valid_keys: HashSet<(TileCoord, BasemapProvider)>,
+    pub valid_keys: HashSet<(TileCoord, Basemap)>,
     pub in_flight: usize,
     pub unconsumed_results: usize,
     pub is_shutdown: bool,
@@ -373,7 +401,7 @@ impl TileWorkQueue {
 
 /// Asynchronous Basemap Tile Downloader & Cache Manager
 pub struct BasemapManager {
-    pub provider: BasemapProvider,
+    pub basemap: Basemap,
     pub zoom: u32,
     pub opacity: f32,
     pub is_enabled: bool,
@@ -388,7 +416,7 @@ pub struct BasemapManager {
     result_receiver: Receiver<TileDownloadResult>,
 
     // Tracking state
-    requested_tiles: HashSet<(TileCoord, BasemapProvider)>,
+    requested_tiles: HashSet<(TileCoord, Basemap)>,
     pub batch_total: usize,
     pub batch_completed: usize,
     pub loaded_count: usize,
@@ -445,7 +473,7 @@ impl BasemapManager {
                                 // CANCELLATION CHECK:
                                 // If the tile was panned out of view, its key was removed from valid_keys.
                                 // In that case, we discard it immediately with zero network overhead!
-                                if guard.valid_keys.contains(&(task.coord, task.provider)) {
+                                if guard.valid_keys.contains(&(task.coord, task.basemap.clone())) {
                                     guard.in_flight += 1;
                                     break task;
                                 }
@@ -460,13 +488,14 @@ impl BasemapManager {
                     };
 
                     // 1. Check persistent disk cache first (offline instant hit)
-                    if let Some(cached_bytes) = crate::gis::cache::DiskCacheManager::read_basemap_tile(task.provider, task.coord) {
+                    if let Some(cached_bytes) = crate::gis::cache::DiskCacheManager::read_basemap_tile(&task.basemap, task.coord) {
                         if let Ok(img) = image::load_from_memory(&cached_bytes) {
                             let rgba = img.to_rgba8();
                             let (w, h) = rgba.dimensions();
                             let _ = tx.send(TileDownloadResult::Success(DecodedTile {
                                 coord: task.coord,
-                                provider: task.provider,
+                                basemap: task.basemap.clone(),
+                                has_texture: true,
                                 width: w,
                                 height: h,
                                 rgba_bytes: rgba.into_raw(),
@@ -493,14 +522,15 @@ impl BasemapManager {
                             let mut bytes = Vec::new();
                             if response.into_reader().read_to_end(&mut bytes).is_ok() && !bytes.is_empty() {
                                 // Write raw bytes to persistent disk cache
-                                crate::gis::cache::DiskCacheManager::write_basemap_tile(task.provider, task.coord, &bytes);
+                                crate::gis::cache::DiskCacheManager::write_basemap_tile(&task.basemap, task.coord, &bytes);
 
                                 if let Ok(img) = image::load_from_memory(&bytes) {
                                     let rgba = img.to_rgba8();
                                     let (w, h) = rgba.dimensions();
                                     let _ = tx.send(TileDownloadResult::Success(DecodedTile {
                                         coord: task.coord,
-                                        provider: task.provider,
+                                        basemap: task.basemap.clone(),
+                                        has_texture: true,
                                         width: w,
                                         height: h,
                                         rgba_bytes: rgba.into_raw(),
@@ -513,7 +543,7 @@ impl BasemapManager {
                     }
 
                     if !success {
-                        let _ = tx.send(TileDownloadResult::Failure(task.coord, task.provider, task.epoch));
+                        let _ = tx.send(TileDownloadResult::Failure(task.coord, task.basemap, task.epoch));
                     }
 
 
@@ -527,7 +557,7 @@ impl BasemapManager {
         }
 
         Self {
-            provider: BasemapProvider::OpenStreetMap,
+            basemap: Basemap::OpenStreetMap,
             zoom: 16,
             opacity: 1.0,
             is_enabled: true,
@@ -548,6 +578,15 @@ impl BasemapManager {
             ram_cache: TileRamCache::new(512),
             ram_hits: Vec::new(),
             cache_epoch: 0,
+        }
+    }
+
+    /// Sets or changes the active basemap, invalidating the queue if different
+    pub fn set_basemap(&mut self, basemap: Basemap) {
+        if self.basemap != basemap {
+            self.basemap = basemap;
+            self.clear_cache();
+            self.cache_epoch = self.cache_epoch.wrapping_add(1);
         }
     }
 
@@ -595,7 +634,7 @@ impl BasemapManager {
 
     /// Returns true if tiles are actively downloading in background or ready in RAM
     pub fn is_streaming(&self) -> bool {
-        if !self.is_enabled || self.provider == BasemapProvider::None {
+        if !self.is_enabled {
             return false;
         }
         if !self.ram_hits.is_empty() {
@@ -1069,7 +1108,7 @@ impl BasemapManager {
 
     /// Requests downloads for tiles in view, canceling out-of-view tasks and maintaining a prioritized bounded queue
     pub fn request_tiles(&mut self, tiles: &[TileCoord]) {
-        if self.provider == BasemapProvider::None || !self.is_enabled || tiles.is_empty() {
+        if !self.is_enabled || tiles.is_empty() {
             return;
         }
 
@@ -1083,7 +1122,7 @@ impl BasemapManager {
         // 1. Build current visible keys set
         let mut current_visible = HashSet::with_capacity(tiles.len());
         for &coord in tiles {
-            current_visible.insert((coord, self.provider));
+            current_visible.insert((coord, self.basemap.clone()));
         }
 
         // 2. CANCELLATION & PRUNING:
@@ -1091,7 +1130,7 @@ impl BasemapManager {
         let prev_task_count = queue.tasks.len();
         let mut cancelled_keys = Vec::new();
         queue.tasks.retain(|task| {
-            let key = (task.coord, task.provider);
+            let key = (task.coord, task.basemap.clone());
             let keep = current_visible.contains(&key);
             if !keep {
                 cancelled_keys.push(key);
@@ -1115,17 +1154,17 @@ impl BasemapManager {
                 break;
             }
 
-            let key = (coord, self.provider);
+            let key = (coord, self.basemap.clone());
             if !self.requested_tiles.contains(&key) {
                 // 1. Instant hit check from Host CPU RAM Cache (zero VRAM, zero network/disk latency)
-                if let Some(cached_tile) = self.ram_cache.get(coord, self.provider) {
+                if let Some(cached_tile) = self.ram_cache.get(coord, &self.basemap) {
                     self.requested_tiles.insert(key);
                     self.ram_hits.push(cached_tile);
                     continue;
                 }
 
-                if let Some(url) = self.provider.tile_url(coord.z, coord.x, coord.y) {
-                    self.requested_tiles.insert(key);
+                if let Some(url) = self.basemap.tile_url(coord.z, coord.x, coord.y) {
+                    self.requested_tiles.insert(key.clone());
                     queue.valid_keys.insert(key);
 
                     // Priority formula (MapLibre standard):
@@ -1138,7 +1177,7 @@ impl BasemapManager {
 
                     queue.tasks.push(TileDownloadTask {
                         coord,
-                        provider: self.provider,
+                        basemap: self.basemap.clone(),
                         url,
                         priority,
                         epoch: self.cache_epoch,
@@ -1171,7 +1210,7 @@ impl BasemapManager {
             let mut tasks_to_dispatch = Vec::new();
             while queue.in_flight + tasks_to_dispatch.len() < MAX_WASM_CONCURRENT {
                 if let Some(task) = queue.tasks.pop() {
-                    if queue.valid_keys.contains(&(task.coord, task.provider)) {
+                    if queue.valid_keys.contains(&(task.coord, task.basemap.clone())) {
                         tasks_to_dispatch.push(task);
                     }
                 } else {
@@ -1186,7 +1225,7 @@ impl BasemapManager {
                 let tx_clone = tx.clone();
                 let q_clone = queue_arc.clone();
                 let task_coord = task.coord;
-                let task_provider = task.provider;
+                let task_basemap = task.basemap.clone();
                 let task_epoch = task.epoch;
                 crate::gis::platform::http::fetch_bytes(&task.url, move |res| {
                     if let Ok(mut guard) = q_clone.lock() {
@@ -1201,7 +1240,8 @@ impl BasemapManager {
                                     log::debug!("[Basemap] Decoded tile {:?} ({}x{}, {} bytes)", task_coord, w, h, bytes.len());
                                     let _ = tx_clone.send(TileDownloadResult::Success(DecodedTile {
                                         coord: task_coord,
-                                        provider: task_provider,
+                                        basemap: task_basemap,
+                                        has_texture: true,
                                         width: w,
                                         height: h,
                                         rgba_bytes: rgba.into_raw(),
@@ -1209,13 +1249,13 @@ impl BasemapManager {
                                 }
                                 Err(err) => {
                                     log::warn!("[Basemap] Image decode failed for tile {:?} ({} bytes): {}", task_coord, bytes.len(), err);
-                                    let _ = tx_clone.send(TileDownloadResult::Failure(task_coord, task_provider, task_epoch));
+                                    let _ = tx_clone.send(TileDownloadResult::Failure(task_coord, task_basemap, task_epoch));
                                 }
                             }
                         }
                         Err(err) => {
                             log::warn!("[Basemap] Network fetch failed for tile {:?}: {}", task_coord, err);
-                            let _ = tx_clone.send(TileDownloadResult::Failure(task_coord, task_provider, task_epoch));
+                            let _ = tx_clone.send(TileDownloadResult::Failure(task_coord, task_basemap, task_epoch));
                         }
                     }
                 });
@@ -1232,20 +1272,20 @@ impl BasemapManager {
         while let Ok(res) = self.result_receiver.try_recv() {
             match res {
                 TileDownloadResult::Success(tile, _epoch) => {
-                    let key = (tile.coord, tile.provider);
+                    let key = (tile.coord, tile.basemap.clone());
                     completed_keys.push(key);
                     self.batch_completed += 1;
 
                     // Always retain valid decoded raster tile in Host CPU RAM cache
                     self.ram_cache.insert(tile.clone());
 
-                    if tile.provider == self.provider {
+                    if tile.basemap == self.basemap {
                         self.loaded_count += 1;
                         completed.push(tile);
                     }
                 }
-                TileDownloadResult::Failure(coord, provider, _epoch) => {
-                    let key = (coord, provider);
+                TileDownloadResult::Failure(coord, basemap, _epoch) => {
+                    let key = (coord, basemap);
                     failed_keys.push(key);
                     self.batch_completed += 1;
                 }
@@ -1259,7 +1299,7 @@ impl BasemapManager {
             }
             for key in failed_keys {
                 queue.valid_keys.remove(&key);
-                self.requested_tiles.remove(&key);
+                // Retain key in requested_tiles to prevent continuous re-request loops on 404/network errors
             }
             if queue.tasks.is_empty() && queue.in_flight == 0 {
                 self.batch_total = 0;
@@ -1301,7 +1341,7 @@ impl BasemapManager {
 
     /// Unmark a tile as requested (e.g. if evicted from GPU cache) so it can be reloaded if needed
     pub fn unmark_requested(&mut self, coord: TileCoord) {
-        let key = (coord, self.provider);
+        let key = (coord, self.basemap.clone());
         self.requested_tiles.remove(&key);
         if let Ok(mut queue) = self.work_queue.lock() {
             queue.valid_keys.remove(&key);

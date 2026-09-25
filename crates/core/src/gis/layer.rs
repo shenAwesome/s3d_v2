@@ -243,33 +243,21 @@ pub trait Layer: std::fmt::Debug + Send + Sync + 'static {
 /// Backward-compatible alias for [`Layer`].
 pub type LayerTrait = dyn Layer;
 
-impl Layer for Box<dyn Layer> {
-    fn id(&self) -> &str { (**self).id() }
-    fn title(&self) -> &str { (**self).title() }
-    fn layer_type(&self) -> LayerType { (**self).layer_type() }
-    fn visible(&self) -> bool { (**self).visible() }
-    fn set_visible(&mut self, visible: bool) { (**self).set_visible(visible); }
-    fn opacity(&self) -> f32 { (**self).opacity() }
-    fn set_opacity(&mut self, opacity: f32) { (**self).set_opacity(opacity); }
-    fn min_scale(&self) -> f64 { (**self).min_scale() }
-    fn max_scale(&self) -> f64 { (**self).max_scale() }
-    fn load_status(&self) -> LoadStatus { (**self).load_status() }
-    fn spatial_reference(&self) -> Option<&SpatialReference> { (**self).spatial_reference() }
-    fn full_extent(&self) -> Option<Extent> { (**self).full_extent() }
-    fn descriptor(&self) -> LayerDescriptor { (**self).descriptor() }
-    fn color_tint(&self) -> [f32; 4] { (**self).color_tint() }
-    fn set_color_tint(&mut self, tint: [f32; 4]) { (**self).set_color_tint(tint); }
-    fn cast_shadows(&self) -> bool { (**self).cast_shadows() }
-    fn set_cast_shadows(&mut self, cast: bool) { (**self).set_cast_shadows(cast); }
+/// Trait for types that can be converted into a boxed operational layer.
+pub trait IntoLayer {
+    fn into_layer(self) -> Box<dyn Layer>;
+}
 
-    fn update(&mut self, ctx: &LayerUpdateContext) -> LayerStatus { (**self).update(ctx) }
-    fn sync_gpu(&mut self, ctx: &mut LayerGpuContext) { (**self).sync_gpu(ctx); }
-    fn destroy(&mut self, ctx: &mut LayerGpuContext) { (**self).destroy(ctx); }
-    fn on_origin_changed(&mut self, origin: &crate::gis::crs::ProjectOrigin) { (**self).on_origin_changed(origin); }
-    fn is_streaming(&self) -> bool { (**self).is_streaming() }
+impl<T: Layer + 'static> IntoLayer for T {
+    fn into_layer(self) -> Box<dyn Layer> {
+        Box::new(self)
+    }
+}
 
-    fn as_any(&self) -> &dyn std::any::Any { (**self).as_any() }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { (**self).as_any_mut() }
+impl IntoLayer for Box<dyn Layer> {
+    fn into_layer(self) -> Box<dyn Layer> {
+        self
+    }
 }
 
 // ─── Concrete Layer: TileLayer (Web / Raster Tiles) ──────────────────────────

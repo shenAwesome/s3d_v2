@@ -20,7 +20,8 @@ pub struct MapView<'a> {
     pub layer_registry: &'a LayerRegistry,
     pub sources: &'a SourceRegistry,
     pub budget: &'a ResourceBudget,
-    pub basemap: &'a BasemapManager,
+    pub basemap: Option<&'a crate::gis::basemap::Basemap>,
+    pub basemap_mgr: &'a BasemapManager,
     pub terrain: Option<&'a Terrain>,
     pub terrain_mgr: &'a TerrainManager,
     pub solar_pos: &'a SolarPosition,
@@ -46,7 +47,7 @@ impl<'a> MapView<'a> {
     /// Aggregates all attributions from active sources and basemaps
     pub fn attributions(&self) -> Vec<String> {
         let mut list = self.sources.attributions();
-        let bm_attr = self.basemap.provider.attribution().to_string();
+        let bm_attr = self.basemap_mgr.basemap.attribution().to_string();
         if !bm_attr.is_empty() && !list.contains(&bm_attr) {
             list.push(bm_attr);
         }

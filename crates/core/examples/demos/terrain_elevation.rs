@@ -4,11 +4,10 @@
 //! rendering 3D mountain relief (Mount Fuji), and interactive height exaggeration adjustment.
 
 use super::Demo;
-use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapResponse;
 use s3d_core::gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
-use s3d_core::gis::map::Basemap;
 use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, Terrain};
+use s3d_core::{Basemap, GoToOptions, Map};
 
 pub struct TerrainElevationDemo {
     exaggeration: f32,
@@ -27,39 +26,39 @@ impl Demo for TerrainElevationDemo {
         "Adding 3D digital elevation model (DEM) terrain with height exaggeration."
     }
 
-    fn setup(&mut self, engine: &mut MapEngine) {
+    fn setup(&mut self, map: &mut Map) {
         // Center on Mount Fuji (3,776 m)
         let fuji = GeoCoord::new(35.3606, 138.7274, 3776.0);
-        engine.set_origin(ProjectOrigin::from_geo(fuji));
-        engine.projection_mode = ProjectionMode::PlanarENU;
-        engine.set_basemap(Basemap::esri_imagery());
+        map.set_origin(ProjectOrigin::from_geo(fuji));
+        map.projection_mode = ProjectionMode::PlanarENU;
+        map.basemap = Some(Basemap::esri_imagery());
 
         // Configure 3D Terrain DEM with height exaggeration:
         self.exaggeration = 1.5;
-        engine.terrain = Some(AwsTerrain::new().with_exaggeration(self.exaggeration).into());
+        map.terrain = Some(AwsTerrain::new().with_exaggeration(self.exaggeration).into());
 
-        engine.goto(
+        map.goto(
             [138.7274, 35.3606],
-            s3d_core::engine::map_engine::GoToOptions::immediate()
+            GoToOptions::immediate()
                 .with_distance(18000.0)
                 .with_heading(-45.0)
                 .with_pitch(28.0),
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, map: &mut Map) -> bool {
         let mut changed = false;
 
         ui.label("DEM Provider:");
-        let is_aws = matches!(engine.terrain, Some(Terrain::Aws(_)));
-        let is_esri = matches!(engine.terrain, Some(Terrain::Esri(_)));
+        let is_aws = matches!(map.terrain, Some(Terrain::Aws(_)));
+        let is_esri = matches!(map.terrain, Some(Terrain::Esri(_)));
 
         if ui.selectable_label(is_aws, "AWS Terrarium").clicked() && !is_aws {
-            engine.terrain = Some(AwsTerrain::new().with_exaggeration(self.exaggeration).into());
+            map.terrain = Some(AwsTerrain::new().with_exaggeration(self.exaggeration).into());
             changed = true;
         }
         if ui.selectable_label(is_esri, "Esri Terrain3D").clicked() && !is_esri {
-            engine.terrain = Some(EsriTerrain::new().with_exaggeration(self.exaggeration).into());
+            map.terrain = Some(EsriTerrain::new().with_exaggeration(self.exaggeration).into());
             changed = true;
         }
 
@@ -70,7 +69,7 @@ impl Demo for TerrainElevationDemo {
         if ui.add(
             egui::Slider::new(&mut self.exaggeration, 0.5..=3.0).step_by(0.1),
         ).changed() {
-            if let Some(terrain) = &mut engine.terrain {
+            if let Some(terrain) = &mut map.terrain {
                 terrain.set_exaggeration(self.exaggeration);
             }
             changed = true;
@@ -79,7 +78,7 @@ impl Demo for TerrainElevationDemo {
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut Map) {
         // No click handling needed
     }
 }

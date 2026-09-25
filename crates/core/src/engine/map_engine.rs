@@ -1,5 +1,5 @@
 use glam::Vec3;
-use crate::gis::basemap::BasemapManager;
+use crate::gis::basemap::{Basemap, BasemapManager};
 use crate::gis::cache::ResourceBudget;
 use crate::gis::crs::{GeoCoord, ProjectOrigin, ProjectionMode};
 use crate::gis::geojson_loader::GisFeature;
@@ -23,15 +23,17 @@ use crate::engine::command::{
 use crate::engine::event::MapEvent;
 use crate::engine::view::MapView;
 
-/// Core 3D GIS & Map Engine
+static MAP_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The central 3D GIS Map engine.
 ///
-/// Encapsulates 3D GPU rendering, tile streaming (basemaps, terrain),
-/// polymorphic GIS layers, solar lighting/shadow analysis, camera navigation, and spatial picking.
-///
-/// Headless and decoupled from any UI framework.
-pub struct MapEngine {
-    // GIS Document Model
-    pub map: crate::gis::map::Map,
+/// Encapsulates GIS layers, backdrop basemap, 3D elevation terrain,
+/// camera navigation, solar lighting/shadow analysis, spatial picking, and WGPU rendering.
+pub struct Map {
+    // GIS Document Metadata & CRS
+    pub id: String,
+    pub title: String,
+    pub spatial_reference: crate::gis::geometry::SpatialReference,
 
     // Renderer
     pub renderer: Option<RenderEngine>,
@@ -41,9 +43,11 @@ pub struct MapEngine {
     pub camera: Camera,
     pub projection_mode: ProjectionMode,
 
-    // GIS Streaming Data Sources
+    // GIS Streaming Data Sources & Layers
     pub sources: SourceRegistry,
-    pub basemap: BasemapManager,
+    pub basemap: Option<Basemap>,
+    pub(crate) basemap_mgr: BasemapManager,
+    previous_basemap: Option<Basemap>,
     pub terrain: Option<Terrain>,
     pub terrain_mgr: TerrainManager,
     previous_terrain: Option<Terrain>,
@@ -74,7 +78,9 @@ pub struct MapEngine {
     // Active Globe Flight Animation
     pub active_globe_flight: Option<GlobeFlightState>,
 
-    // Projection Auto-Switch Configuration (MSL Altitude threshold in meters)
+    // Viewing Mode & Projection Auto-Switch Configuration
+    pub viewing_mode: crate::gis::map::ViewingMode,
+    previous_viewing_mode: crate::gis::map::ViewingMode,
     pub auto_switch_altitude: Option<f64>,
 
     // Status & Event Queue
@@ -82,21 +88,29 @@ pub struct MapEngine {
     pub events: Vec<MapEvent>,
 }
 
-impl Default for MapEngine {
+/// Backward compatibility alias: `MapEngine` is now identical to [`Map`].
+pub type MapEngine = Map;
+
+impl Default for Map {
     fn default() -> Self {
-        // Default Melbourne CBD origin
+        Self::new()
+    }
+}
+
+impl Map {
+    /// Creates a new Map initialized with default settings (Melbourne CBD origin, WGS 84, OSM basemap).
+    pub fn new() -> Self {
         let origin = ProjectOrigin::from_geo(GeoCoord {
             latitude: -37.8136,
             longitude: 144.9631,
             elevation: 0.0,
         });
-        Self::new(origin)
+        Self::from_origin(origin)
     }
-}
 
-impl MapEngine {
-    /// Creates a new MapEngine initialized at the given geographic origin
-    pub fn new(origin: ProjectOrigin) -> Self {
+    /// Creates a new Map initialized at the given geographic project origin.
+    pub fn from_origin(origin: impl Into<ProjectOrigin>) -> Self {
+        let origin = origin.into();
         let solar_dt = SolarDateTimeState::default();
         let utc_dt = solar_dt.to_utc_datetime();
         let solar_pos = calculate_solar_position(
@@ -107,14 +121,18 @@ impl MapEngine {
         );
 
         Self {
-            map: crate::gis::map::Map::with_basemap(crate::gis::map::Basemap::osm()),
+            id: format!("map_{}", MAP_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
+            title: "Untitled Map".to_string(),
+            spatial_reference: crate::gis::geometry::SpatialReference::Wgs84,
             renderer: None,
             scene: Scene::new(origin),
             camera: Camera::default(),
             projection_mode: ProjectionMode::PlanarENU,
 
             sources: SourceRegistry::new(),
-            basemap: BasemapManager::new(),
+            basemap: Some(Basemap::osm()),
+            basemap_mgr: BasemapManager::new(),
+            previous_basemap: None,
             terrain: None,
             terrain_mgr: TerrainManager::new(),
             previous_terrain: None,
@@ -140,47 +158,32 @@ impl MapEngine {
             mouse_drag_distance: 0.0,
 
             active_globe_flight: None,
+            viewing_mode: crate::gis::map::ViewingMode::default(),
+            previous_viewing_mode: crate::gis::map::ViewingMode::default(),
             auto_switch_altitude: Some(50_000.0),
             status_message: String::new(),
             events: Vec::new(),
         }
     }
 
-    /// Creates a new MapEngine initialized from a GIS Map document model
-    pub fn from_map(map: crate::gis::map::Map) -> Self {
-        let origin = ProjectOrigin::from_geo(map.origin);
-        let mut engine = Self::new(origin);
-        engine.set_map(map);
-        engine
+    /// Returns the geographic origin of the map.
+    pub fn origin(&self) -> GeoCoord {
+        self.scene.origin.origin
     }
 
-    /// Attaches a GIS Map document model and synchronizes origin, basemap, terrain, and operational layers
-    pub fn set_map(&mut self, map: crate::gis::map::Map) {
-        self.set_origin(ProjectOrigin::from_geo(map.origin));
-        self.clear_layers();
-        self.align_north();
-        if let Some(basemap) = &map.basemap {
-            self.apply_basemap(basemap);
+    /// Synchronizes changes in `self.viewing_mode` to projection mode and altitude threshold.
+    pub fn sync_viewing_mode_if_changed(&mut self) {
+        if self.viewing_mode == self.previous_viewing_mode {
+            return;
         }
-        // Synchronize Ground elevation
-        if !map.ground.layers.is_empty() {
-            self.terrain = Some(Terrain::Esri(crate::gis::terrain::EsriTerrain::default().with_exaggeration(map.ground.elevation_exaggeration)));
-        } else {
-            self.terrain = None;
-        }
-        self.sync_terrain_if_changed();
-        self.map = map;
-        match self.map.viewing_mode {
+
+        match self.viewing_mode {
             crate::gis::map::ViewingMode::Auto { threshold_altitude } => {
                 self.auto_switch_altitude = Some(threshold_altitude);
             }
             crate::gis::map::ViewingMode::Globe => {
                 self.auto_switch_altitude = None;
-                self.projection_mode = ProjectionMode::GlobeECEF;
-                if let Some(r) = &mut self.renderer {
-                    r.projection_mode = ProjectionMode::GlobeECEF;
-                    r.morph_progress = 1.0;
-                }
+                self.transition_to_globe();
             }
             crate::gis::map::ViewingMode::Planar => {
                 self.auto_switch_altitude = None;
@@ -192,62 +195,36 @@ impl MapEngine {
             }
         }
 
-        // Frame the new map origin with sensible default overview
-        if self.projection_mode == ProjectionMode::GlobeECEF {
-            self.camera.target = glam::Vec3::ZERO;
-            self.camera.target_lookat = glam::Vec3::ZERO;
-            self.camera.distance = 18_000_000.0;
-            self.camera.target_distance = 18_000_000.0;
-        } else {
-            self.camera.target = glam::Vec3::ZERO;
-            self.camera.target_lookat = glam::Vec3::ZERO;
-            self.camera.distance = 2500.0;
-            self.camera.target_distance = 2500.0;
-            self.camera.pitch = 45.0f32.to_radians();
-            self.camera.target_pitch = 45.0f32.to_radians();
+        self.previous_viewing_mode = self.viewing_mode;
+    }
+
+    /// Synchronizes changes in `self.basemap` to `self.basemap_mgr` and reloads renderer tiles if needed.
+    pub fn sync_basemap_if_changed(&mut self) {
+        if self.basemap == self.previous_basemap {
+            return;
         }
-        self.camera.snap_smoothing();
-    }
 
-    /// Enables or disables automatic switching between Globe and Planar projection
-    /// based on camera altitude above Mean Sea Level (MSL).
-    ///
-    /// Pass `Some(threshold_meters)` (e.g. `Some(50_000.0)`) or `None` to disable.
-    pub fn set_auto_projection_switch(&mut self, threshold: Option<f64>) {
-        self.auto_switch_altitude = threshold;
-    }
-
-    /// Sets or replaces the active basemap using an Esri-style Basemap
-    pub fn set_basemap(&mut self, basemap: crate::gis::map::Basemap) {
-        self.apply_basemap(&basemap);
-        self.map.set_basemap(basemap);
-    }
-
-    fn apply_basemap(&mut self, basemap: &crate::gis::map::Basemap) {
-        if basemap.base_layers.is_empty() {
-            self.basemap.is_enabled = false;
-            self.basemap.provider = crate::gis::basemap::BasemapProvider::None;
-        } else if let Some(first_layer) = basemap.base_layers.get(0) {
-            self.basemap.is_enabled = true;
-            match first_layer.id() {
-                "esri_imagery_tiles" | "esri_imagery" => {
-                    self.basemap.provider = crate::gis::basemap::BasemapProvider::EsriImagery;
+        match &self.basemap {
+            Some(bm) => {
+                self.basemap_mgr.set_basemap(bm.clone());
+                self.basemap_mgr.is_enabled = true;
+                self.basemap_mgr.reset_cache();
+                if let Some(r) = &mut self.renderer {
+                    r.clear_basemap_tiles();
                 }
-                "esri_streets_tiles" | "esri_streets" => {
-                    self.basemap.provider = crate::gis::basemap::BasemapProvider::EsriStreet;
+                self.events.push(MapEvent::BasemapChanged(Some(bm.clone())));
+            }
+            None => {
+                self.basemap_mgr.is_enabled = false;
+                self.basemap_mgr.reset_cache();
+                if let Some(r) = &mut self.renderer {
+                    r.clear_basemap_tiles();
                 }
-                "esri_topo_tiles" | "esri_topo" => {
-                    self.basemap.provider = crate::gis::basemap::BasemapProvider::EsriTopo;
-                }
-                _ => {
-                    self.basemap.provider = crate::gis::basemap::BasemapProvider::OpenStreetMap;
-                }
+                self.events.push(MapEvent::BasemapChanged(None));
             }
         }
-        self.basemap.reset_cache();
-        if let Some(r) = &mut self.renderer {
-            r.clear_basemap_tiles();
-        }
+
+        self.previous_basemap = self.basemap.clone();
     }
 
     /// Synchronizes changes in `self.terrain` to `self.terrain_mgr` and reloads renderer meshes if needed.
@@ -276,7 +253,7 @@ impl MapEngine {
 
                 if !was_enabled || provider_or_url_changed || (prev_exagg - new_exagg).abs() > 1e-4 {
                     if let Some(renderer) = &mut self.renderer {
-                        if self.basemap.is_enabled {
+                        if self.basemap_mgr.is_enabled {
                             renderer.reload_all_terrain_meshes(&self.scene.origin, &self.terrain_mgr);
                         }
                     }
@@ -290,7 +267,7 @@ impl MapEngine {
                 self.terrain_mgr.is_enabled = false;
                 if was_enabled {
                     if let Some(renderer) = &mut self.renderer {
-                        if self.basemap.is_enabled {
+                        if self.basemap_mgr.is_enabled {
                             renderer.reload_all_terrain_meshes(&self.scene.origin, &self.terrain_mgr);
                         } else {
                             renderer.clear_basemap_tiles();
@@ -315,11 +292,10 @@ impl MapEngine {
     pub fn set_origin(&mut self, origin: impl Into<ProjectOrigin>) {
         let origin = origin.into();
         self.scene.origin = origin;
-        self.map.origin = origin.origin;
         for layer in &mut self.layers {
             layer.on_origin_changed(&origin);
         }
-        self.basemap.reset_cache();
+        self.basemap_mgr.reset_cache();
         if let Some(r) = &mut self.renderer {
             r.clear_basemap_tiles();
         }
@@ -327,7 +303,7 @@ impl MapEngine {
         self.events.push(MapEvent::OriginChanged(origin));
     }
 
-    /// Returns an immutable read view facade over MapEngine state
+    /// Returns an immutable read view facade over Map state
     pub fn view(&self) -> MapView<'_> {
         let edge_cfg = self.renderer.as_ref().map(|r| &r.edge_renderer.config);
         MapView {
@@ -337,7 +313,8 @@ impl MapEngine {
             layer_registry: &self.layer_registry,
             sources: &self.sources,
             budget: &self.budget,
-            basemap: &self.basemap,
+            basemap: self.basemap.as_ref(),
+            basemap_mgr: &self.basemap_mgr,
             terrain: self.terrain.as_ref(),
             terrain_mgr: &self.terrain_mgr,
             solar_pos: &self.solar_pos,
@@ -363,9 +340,14 @@ impl MapEngine {
 
     /// Returns true if any background streaming pipeline is actively downloading tiles/data
     pub fn is_streaming(&self) -> bool {
-        self.basemap.is_streaming()
+        self.basemap_mgr.is_streaming()
             || self.terrain_mgr.is_streaming()
             || self.layers.iter().any(|l| l.is_streaming())
+    }
+
+    /// Returns true if downloaded basemap or terrain tiles are waiting to be uploaded to GPU
+    pub fn has_unconsumed_completed(&self) -> bool {
+        self.basemap_mgr.has_unconsumed_completed() || self.terrain_mgr.has_unconsumed_completed()
     }
 
     /// Per-frame update: advances flight transitions, updates streaming data, syncs solar position
@@ -392,8 +374,10 @@ impl MapEngine {
 
     /// Updates Basemap, 3D Terrain, 3D Tiles, and I3S streaming
     pub fn update_streaming(&mut self) {
-        // 0. Synchronize terrain if modified
+        // 0. Synchronize viewing mode, terrain & basemap if modified
+        self.sync_viewing_mode_if_changed();
         self.sync_terrain_if_changed();
+        self.sync_basemap_if_changed();
 
         let (vp_w, vp_h) = if let Some(renderer) = &self.renderer {
             (renderer.current_width as f32, renderer.current_height as f32)
@@ -401,9 +385,9 @@ impl MapEngine {
             (1280.0, 720.0)
         };
 
-        if self.basemap.is_enabled || self.terrain_mgr.is_enabled {
+        if self.basemap_mgr.is_enabled || self.terrain_mgr.is_enabled {
             let active_tiles = if self.projection_mode == ProjectionMode::GlobeECEF {
-                self.basemap.calculate_globe_camera_tiles(&self.camera, vp_w, vp_h)
+                self.basemap_mgr.calculate_globe_camera_tiles(&self.camera, vp_w, vp_h)
             } else {
                 let center_geo = self.scene.origin.local_to_geo(self.camera.target);
                 let dyn_zoom = crate::gis::basemap::BasemapManager::calculate_camera_lod_zoom_with_hysteresis(
@@ -411,23 +395,23 @@ impl MapEngine {
                     self.camera.fov_y,
                     vp_h,
                     center_geo.latitude,
-                    self.basemap.zoom,
+                    self.basemap_mgr.zoom,
                 );
-                self.basemap.zoom = dyn_zoom;
-                self.basemap.calculate_camera_tiles(
+                self.basemap_mgr.zoom = dyn_zoom;
+                self.basemap_mgr.calculate_camera_tiles(
                     &self.scene.origin,
                     &self.camera,
                     vp_w,
                     vp_h,
                 )
             };
-            self.basemap.target_active_count = active_tiles.len();
-            self.basemap.previous_active_tiles = active_tiles.iter().copied().collect();
+            self.basemap_mgr.target_active_count = active_tiles.len();
+            self.basemap_mgr.previous_active_tiles = active_tiles.iter().copied().collect();
 
             let mut new_tiles = Vec::new();
-            if self.basemap.is_enabled {
-                self.basemap.request_tiles(&active_tiles);
-                new_tiles = self.basemap.drain_completed_tiles();
+            if self.basemap_mgr.is_enabled {
+                self.basemap_mgr.request_tiles(&active_tiles);
+                new_tiles = self.basemap_mgr.drain_completed_tiles();
             } else if self.terrain_mgr.is_enabled {
                 if let Some(renderer) = &self.renderer {
                     for &coord in &active_tiles {
@@ -456,8 +440,8 @@ impl MapEngine {
             }
 
             if let Some(renderer) = &mut self.renderer {
-                let grid_mode = if self.basemap.is_enabled { 0.0 } else { 1.0 };
-                renderer.update_basemap_uniforms(self.basemap.opacity, grid_mode, self.basemap.show_debug_borders);
+                let grid_mode = if self.basemap_mgr.is_enabled { 0.0 } else { 1.0 };
+                renderer.update_basemap_uniforms(self.basemap_mgr.opacity, grid_mode, self.basemap_mgr.show_debug_borders);
 
                 for tile in new_tiles {
                     let terrain_tile = if self.terrain_mgr.is_enabled {
@@ -468,13 +452,13 @@ impl MapEngine {
                     let evicted = renderer.add_tile(
                         tile,
                         &self.scene.origin,
-                        self.basemap.opacity,
+                        self.basemap_mgr.opacity,
                         if self.terrain_mgr.is_enabled { Some(&self.terrain_mgr) } else { None },
                         terrain_tile.as_ref(),
                         self.terrain_mgr.height_exaggeration,
                     );
                     for ev in evicted {
-                        self.basemap.unmark_requested(ev);
+                        self.basemap_mgr.unmark_requested(ev);
                     }
                 }
 
@@ -501,7 +485,7 @@ impl MapEngine {
 
                 let idle_evicted = renderer.prune_unneeded_tiles(&active_tiles);
                 for ev in idle_evicted {
-                    self.basemap.unmark_requested(ev);
+                    self.basemap_mgr.unmark_requested(ev);
                 }
             }
         } else if let Some(renderer) = &mut self.renderer {
@@ -612,7 +596,7 @@ impl MapEngine {
                     self.camera.snap_smoothing();
                     let target_geo = flight.target_geo;
                     let target_planar_dist = flight.target_planar_dist;
-                    self.transition_to_planar_at_geo(target_geo.latitude, target_geo.longitude, 20_000.0);
+                    self.transition_to_planar_at_geo_with_pose(target_geo.latitude, target_geo.longitude, 20_000.0, 0.0, 45.0);
 
                     flight.phase = crate::renderer::camera::FlightPhase::PlanarLanding {
                         start_dist: 20_000.0,
@@ -697,7 +681,7 @@ impl MapEngine {
             r.clear_i3s_tiles();
             r.clear_threedtiles();
         }
-        self.basemap.reset_cache();
+        self.basemap_mgr.reset_cache();
         self.terrain_mgr.clear_cache();
         for layer in &mut self.layers {
             layer.on_origin_changed(&self.scene.origin);
@@ -720,12 +704,6 @@ impl MapEngine {
         self.reload_all_gpu_meshes();
     }
 
-    /// Transitions from 3D Globe to Local Planar ENU centered on the specified geographic coordinate.
-    /// Defaults to heading 0.0° (North) and tilt 45.0° (oblique 3D perspective).
-    pub fn transition_to_planar_at_geo(&mut self, lat: f64, lon: f64, target_distance: f32) {
-        self.transition_to_planar_at_geo_with_pose(lat, lon, target_distance, 0.0, 45.0);
-    }
-
     pub fn transition_to_globe(&mut self) {
         if self.projection_mode == ProjectionMode::GlobeECEF {
             return;
@@ -742,7 +720,7 @@ impl MapEngine {
             renderer.clear_threedtiles();
             renderer.clear_meshes();
         }
-        self.basemap.reset_cache();
+        self.basemap_mgr.reset_cache();
         self.terrain_mgr.clear_cache();
 
         const WGS84_RADIUS: f32 = crate::gis::crs::WGS84_A as f32;
@@ -846,16 +824,12 @@ impl MapEngine {
                 LayerCommand::AddDescriptor(_) => {}
             },
             MapCommand::Basemap(bm_cmd) => match bm_cmd {
-                BasemapCommand::SetProvider(provider) => {
-                    self.basemap.provider = provider;
-                    self.basemap.is_enabled = true;
-                    self.events.push(MapEvent::BasemapProviderChanged(provider));
-                }
-                BasemapCommand::SetEnabled(enabled) => {
-                    self.basemap.is_enabled = enabled;
+                BasemapCommand::Set(basemap_opt) => {
+                    self.basemap = basemap_opt;
+                    self.sync_basemap_if_changed();
                 }
                 BasemapCommand::ResetCache => {
-                    self.basemap.reset_cache();
+                    self.basemap_mgr.reset_cache();
                     if let Some(r) = &mut self.renderer {
                         r.gpu_tiles.clear();
                     }
@@ -1183,30 +1157,14 @@ impl MapEngine {
         self.events.push(MapEvent::CameraMoved);
     }
 
-    pub fn set_projection_mode(&mut self, mode: ProjectionMode) {
-        self.projection_mode = mode;
-        if let Some(r) = &mut self.renderer {
-            r.projection_mode = mode;
-            r.morph_progress = if mode == ProjectionMode::GlobeECEF { 1.0 } else { 0.0 };
-        }
-    }
-
     // --- GIS Layers ---
 
-    /// Appends any layer implementing [`Layer`] to the engine.
+    /// Appends an operational layer to the map.
     ///
-    /// Accepts concrete layer types (e.g. `FeatureLayer`, `SceneLayer`, `IntegratedMeshLayer`)
-    /// or `Box<dyn Layer>`.
-    pub fn add_layer<L: Layer>(&mut self, mut layer: L) -> usize {
-        layer.on_origin_changed(&self.scene.origin);
-        self.layers.push(Box::new(layer));
-        let idx = self.layers.len() - 1;
-        self.reload_all_gpu_meshes();
-        idx
-    }
-
-    /// Appends a pre-boxed layer implementing [`Layer`] to the engine.
-    pub fn add_boxed_layer(&mut self, mut layer: Box<dyn Layer>) -> usize {
+    /// Accepts concrete layer types (e.g. `FeatureLayer`, `SceneLayer`, `TileLayer`)
+    /// or a pre-boxed `Box<dyn Layer>`.
+    pub fn add_layer(&mut self, layer: impl crate::gis::layer::IntoLayer) -> usize {
+        let mut layer = layer.into_layer();
         layer.on_origin_changed(&self.scene.origin);
         self.layers.push(layer);
         let idx = self.layers.len() - 1;

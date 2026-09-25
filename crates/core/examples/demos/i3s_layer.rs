@@ -5,13 +5,11 @@
 //! and per-building feature mesh segmentation in Melbourne CBD.
 
 use super::Demo;
-use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapResponse;
-use s3d_core::engine::GoToOptions;
-use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectionMode};
 use s3d_core::gis::layer::SceneLayer;
 use s3d_core::gis::terrain::EsriTerrain;
+use s3d_core::{Basemap, GoToOptions, Map};
 
 pub struct I3SPreset {
     pub name: &'static str,
@@ -113,19 +111,18 @@ impl Demo for I3SLayerDemo {
         "Stream Indexed 3D Scene Layers (I3S) with nodepage index trees and binary vertex buffers."
     }
 
-    fn setup(&mut self, engine: &mut MapEngine) {
+    fn setup(&mut self, map: &mut Map) {
         if let Some(p) = Self::check_url_preset() {
             self.selected_preset = p;
         }
         let preset = &PRESETS[self.selected_preset];
         let origin = GeoCoord::new(preset.latitude, preset.longitude, 0.0);
-        engine.set_origin(origin);
-        engine.projection_mode = ProjectionMode::PlanarENU;
-        engine.basemap.is_enabled = true;
-        engine.basemap.provider = BasemapProvider::OpenStreetMap;
+        map.set_origin(origin);
+        map.projection_mode = ProjectionMode::PlanarENU;
+        map.basemap = Some(Basemap::osm());
 
         // 1. Configure 3D digital elevation model (DEM) terrain using Esri WorldElevation3D
-        engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.0).into());
+        map.terrain = Some(EsriTerrain::new().with_exaggeration(1.0).into());
 
         // 2. Configure and activate Esri I3S SceneLayer streaming
         let mut scene_layer = SceneLayer::new(
@@ -136,11 +133,11 @@ impl Demo for I3SLayerDemo {
         let c = preset.default_color;
         scene_layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
         scene_layer.set_cast_shadows(self.shadows);
-        engine.sunlight_enabled = self.shadows;
-        engine.add_layer(scene_layer);
+        map.sunlight_enabled = self.shadows;
+        map.add_layer(scene_layer);
 
         // 3. Position camera overlooking 3D city scene
-        engine.goto(
+        map.goto(
             glam::Vec3::new(0.0, 50.0, 0.0),
             GoToOptions::immediate()
                 .with_distance(preset.camera_distance)
@@ -149,7 +146,7 @@ impl Demo for I3SLayerDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, map: &mut Map) -> bool {
         let mut changed = false;
 
         // Sync with URL hash / search navigation (e.g. #i3s_layer?preset=1)
@@ -157,14 +154,14 @@ impl Demo for I3SLayerDemo {
             if target_p != self.selected_preset {
                 self.selected_preset = target_p;
                 let preset = &PRESETS[target_p];
-                engine.remove_layer("i3s_layer");
-                engine.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
+                map.remove_layer("i3s_layer");
+                map.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
                 let mut layer = SceneLayer::new("i3s_layer", preset.name, preset.url);
                 let c = preset.default_color;
                 layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
                 layer.set_cast_shadows(self.shadows);
-                engine.add_layer(layer);
-                engine.goto(
+                map.add_layer(layer);
+                map.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
@@ -180,14 +177,14 @@ impl Demo for I3SLayerDemo {
         for (i, preset) in PRESETS.iter().enumerate() {
             if ui.selectable_label(self.selected_preset == i, preset.name).clicked() && self.selected_preset != i {
                 self.selected_preset = i;
-                engine.remove_layer("i3s_layer");
-                engine.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
+                map.remove_layer("i3s_layer");
+                map.set_origin(GeoCoord::new(preset.latitude, preset.longitude, 0.0));
                 let mut layer = SceneLayer::new("i3s_layer", preset.name, preset.url);
                 let c = preset.default_color;
                 layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
                 layer.set_cast_shadows(self.shadows);
-                engine.add_layer(layer);
-                engine.goto(
+                map.add_layer(layer);
+                map.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
@@ -206,32 +203,32 @@ impl Demo for I3SLayerDemo {
         ui.separator();
 
         // 3D Terrain DEM toggle
-        let mut terrain_enabled = engine.terrain.is_some();
+        let mut terrain_enabled = map.terrain.is_some();
         if ui.checkbox(&mut terrain_enabled, "Terrain").changed() {
             if terrain_enabled {
-                engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.0).into());
+                map.terrain = Some(EsriTerrain::new().with_exaggeration(1.0).into());
             } else {
-                engine.terrain = None;
+                map.terrain = None;
             }
             changed = true;
         }
 
         // Shadows toggle
         if ui.checkbox(&mut self.shadows, "Shadows").changed() {
-            if let Some(layer) = engine.get_layer_mut::<SceneLayer>("i3s_layer") {
+            if let Some(layer) = map.get_layer_mut::<SceneLayer>("i3s_layer") {
                 layer.set_cast_shadows(self.shadows);
             }
-            if let Some(r) = &mut engine.renderer {
+            if let Some(r) = &mut map.renderer {
                 r.i3s_cast_shadows = self.shadows;
             }
-            engine.sunlight_enabled = self.shadows;
+            map.sunlight_enabled = self.shadows;
             changed = true;
         }
 
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut Map) {
         // No click handling needed
     }
 }

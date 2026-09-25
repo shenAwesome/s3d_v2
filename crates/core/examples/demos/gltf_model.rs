@@ -5,14 +5,12 @@
 
 use super::Demo;
 use glam::Vec3;
-use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapResponse;
-use s3d_core::engine::GoToOptions;
-use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectionMode};
 use s3d_core::gis::extrusion::RawMeshData;
 use s3d_core::gis::geojson_loader::GisFeature;
 use s3d_core::gis::layer::{FeatureLayer, LayerType};
+use s3d_core::{Basemap, GoToOptions, Map};
 
 pub struct GltfModelDemo;
 
@@ -154,18 +152,17 @@ impl Demo for GltfModelDemo {
         "Anchor geo-referenced 3D structural assets with 6-DOF orientation in local ENU space."
     }
 
-    fn setup(&mut self, engine: &mut MapEngine) {
+    fn setup(&mut self, map: &mut Map) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        engine.set_origin(melbourne);
-        engine.projection_mode = ProjectionMode::PlanarENU;
-        engine.basemap.is_enabled = true;
-        engine.basemap.provider = BasemapProvider::OpenStreetMap;
+        map.set_origin(melbourne);
+        map.projection_mode = ProjectionMode::PlanarENU;
+        map.basemap = Some(Basemap::osm());
 
         // 1. Load context buildings
         let geojson = include_str!("../../assets/sample_buildings.geojson");
         if let Ok(dataset) = s3d_core::gis::geojson_loader::parse_geojson(
             geojson,
-            Some(engine.scene.origin),
+            Some(map.scene.origin),
         ) {
             let mut layer = FeatureLayer::new(
                 "melbourne_buildings",
@@ -174,7 +171,7 @@ impl Demo for GltfModelDemo {
                 [0.85, 0.88, 0.92, 1.0],
             );
             layer.features = dataset.features;
-            engine.add_layer(layer);
+            map.add_layer(layer);
         }
 
         // 2. Instantiate and anchor 3D structural tower asset
@@ -197,10 +194,10 @@ impl Demo for GltfModelDemo {
             ..Default::default()
         };
         model_lyr.features.push(feature);
-        engine.add_layer(model_lyr);
+        map.add_layer(model_lyr);
 
         // 3. Anchor camera closely inspecting 3D model
-        engine.goto(
+        map.goto(
             Vec3::new(320.0, 50.0, 180.0),
             GoToOptions::immediate()
                 .with_distance(240.0)
@@ -209,11 +206,11 @@ impl Demo for GltfModelDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, map: &mut Map) -> bool {
         let mut changed = false;
         ui.label("Focus Camera:");
         if ui.button("Inspect Tower (Close)").clicked() {
-            engine.goto(
+            map.goto(
                 Vec3::new(320.0, 50.0, 180.0),
                 GoToOptions::animated()
                     .with_distance(180.0)
@@ -223,7 +220,7 @@ impl Demo for GltfModelDemo {
             changed = true;
         }
         if ui.button("Context Overview").clicked() {
-            engine.goto(
+            map.goto(
                 Vec3::new(200.0, 40.0, 100.0),
                 GoToOptions::animated()
                     .with_distance(800.0)
@@ -235,7 +232,7 @@ impl Demo for GltfModelDemo {
         changed
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut Map) {
         // No click handling needed
     }
 }

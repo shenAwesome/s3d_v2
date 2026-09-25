@@ -5,16 +5,14 @@
 //! low-rise turquoise to high-rise coral-red based on building height.
 
 use super::Demo;
-use s3d_core::engine::map_engine::MapEngine;
 use s3d_core::engine::widget::MapResponse;
-use s3d_core::engine::GoToOptions;
-use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectionMode};
 use s3d_core::gis::geometry::{Geometry, Polygon};
 use s3d_core::gis::graphic::Graphic;
 use s3d_core::gis::layer::FeatureLayer;
 use s3d_core::gis::renderer::Renderer;
 use s3d_core::gis::symbol::Symbol3D;
+use s3d_core::{Basemap, GoToOptions, Map};
 
 pub struct ClassBreaksRendererDemo;
 
@@ -31,12 +29,11 @@ impl Demo for ClassBreaksRendererDemo {
         "Continuous attribute-driven color ramp gradient based on building height."
     }
 
-    fn setup(&mut self, engine: &mut MapEngine) {
+    fn setup(&mut self, map: &mut Map) {
         let melbourne = GeoCoord::new(-37.8136, 144.9631, 0.0);
-        engine.set_origin(melbourne);
-        engine.projection_mode = ProjectionMode::PlanarENU;
-        engine.basemap.is_enabled = true;
-        engine.basemap.provider = BasemapProvider::OpenStreetMap;
+        map.set_origin(melbourne);
+        map.projection_mode = ProjectionMode::PlanarENU;
+        map.basemap = Some(Basemap::osm());
 
         // 1. Define Simple Renderer with continuous ColorRamp VisualVariable
         let default_symbol = Symbol3D::simple_extrude([0.5, 0.5, 0.5, 1.0], 25.0);
@@ -78,9 +75,9 @@ impl Demo for ClassBreaksRendererDemo {
             layer.add_graphic(g);
         }
 
-        engine.add_layer(layer);
+        map.add_layer(layer);
 
-        engine.goto(
+        map.goto(
             glam::Vec3::new(10.0, 45.0, 5.0),
             GoToOptions::immediate()
                 .with_distance(380.0)
@@ -89,7 +86,7 @@ impl Demo for ClassBreaksRendererDemo {
         );
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, _engine: &mut MapEngine) -> bool {
+    fn controls(&mut self, ui: &mut egui::Ui, _map: &mut Map) -> bool {
         // Gradient ramp display
         ui.label(
             egui::RichText::new("■ 15m (Low-Rise)")
@@ -103,7 +100,7 @@ impl Demo for ClassBreaksRendererDemo {
         false
     }
 
-    fn on_map_response(&mut self, _response: &MapResponse, _engine: &mut MapEngine) {
+    fn on_map_response(&mut self, _response: &MapResponse, _map: &mut Map) {
         // No click handling needed
     }
 }

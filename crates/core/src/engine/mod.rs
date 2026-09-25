@@ -11,7 +11,7 @@ pub use command::{
     LayerCommand, MapCommand, TerrainCommand,
 };
 pub use event::MapEvent;
-pub use map_engine::{GoToOptions, GoToTarget, IntoGoToOptions, MapEngine};
+pub use map_engine::{GoToOptions, GoToTarget, IntoGoToOptions, Map, MapEngine};
 pub use navigation::{NavigationController, OrbitState, PanState, ZoomAnchor};
 pub use view::MapView;
 

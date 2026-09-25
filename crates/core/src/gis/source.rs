@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
-use crate::gis::basemap::BasemapProvider;
+use crate::gis::basemap::Basemap;
 use crate::gis::platform::http::fetch_bytes_cancellable;
 
 /// Generational unique identifier for sources
@@ -148,10 +148,10 @@ impl XyzRasterSource {
         }
     }
 
-    pub fn from_provider(id: SourceId, provider: BasemapProvider) -> Self {
-        let name = provider.display_name().to_string();
-        let attribution = provider.attribution().to_string();
-        let generic_template = provider
+    pub fn from_basemap(id: SourceId, basemap: &Basemap) -> Self {
+        let name = basemap.display_name().to_string();
+        let attribution = basemap.attribution().to_string();
+        let generic_template = basemap
             .tile_url(0, 0, 0)
             .map(|url| {
                 url.replace("/0/0/0.", "/{z}/{x}/{y}.")
