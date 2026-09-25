@@ -375,10 +375,7 @@ fn fs_screen_line(in: VertexOutput) -> FragmentOutput {
 @fragment
 fn fs_threedtile(in: VertexOutput) -> FragmentOutput {
     let V = normalize(camera.eye_pos.xyz - in.world_pos);
-    // Use faceForward to handle I3S / glTF meshes whose normals may point inward
-    // (CW-wound geometry from outside): always orient the normal toward the camera so
-    // both lighting and the implicit backface test work correctly for any winding order.
-    let N = faceForward(normalize(in.world_normal), -V, normalize(in.world_normal));
+    let N = normalize(in.world_normal);
 
     let L = normalize(light.sun_dir.xyz);
     let is_daylight = light.sun_dir.w;
