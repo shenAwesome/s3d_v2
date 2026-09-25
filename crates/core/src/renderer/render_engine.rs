@@ -127,6 +127,7 @@ pub struct RenderEngine {
     // Esri SceneLayer (I3S) GPU Tiles
     pub i3s_gpu_tiles: HashMap<u32, I3SGpuTile>,
     pub active_i3s_nodes_to_draw: Vec<u32>,
+    pub i3s_cast_shadows: bool,
 
     // OGC 3D Tiles (Cesium 3D Tiles) GPU Meshes
     pub threedtiles_gpu_tiles: HashMap<String, ThreeDTileGpuMesh>,
@@ -436,6 +437,7 @@ impl RenderEngine {
             frame_count: 0,
             i3s_gpu_tiles: HashMap::new(),
             active_i3s_nodes_to_draw: Vec::new(),
+            i3s_cast_shadows: true,
             threedtiles_gpu_tiles: HashMap::new(),
             active_threedtiles_to_draw: Vec::new(),
             show_3dtiles_bounding_boxes: true,
@@ -1580,12 +1582,14 @@ impl RenderEngine {
                 }
 
                 // Draw active I3S 3D SceneLayer meshes into shadow depth buffer
-                for node_id in &self.active_i3s_nodes_to_draw {
-                    if let Some(tile) = self.i3s_gpu_tiles.get(node_id) {
-                        shadow_pass.set_bind_group(1, &tile.bind_group, &[]);
-                        shadow_pass.set_vertex_buffer(0, tile.mesh.vertex_buffer.slice(..));
-                        shadow_pass.set_index_buffer(tile.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                        shadow_pass.draw_indexed(0..tile.mesh.num_indices, 0, 0..1);
+                if self.i3s_cast_shadows {
+                    for node_id in &self.active_i3s_nodes_to_draw {
+                        if let Some(tile) = self.i3s_gpu_tiles.get(node_id) {
+                            shadow_pass.set_bind_group(1, &tile.bind_group, &[]);
+                            shadow_pass.set_vertex_buffer(0, tile.mesh.vertex_buffer.slice(..));
+                            shadow_pass.set_index_buffer(tile.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                            shadow_pass.draw_indexed(0..tile.mesh.num_indices, 0, 0..1);
+                        }
                     }
                 }
 

@@ -250,27 +250,6 @@ impl MapEngine {
         }
     }
 
-    /// Configures 3D digital elevation model (DEM) terrain streaming from an ElevationLayer
-    pub fn set_elevation_layer(
-        &mut self,
-        layer: std::sync::Arc<dyn crate::gis::layer::Layer>,
-        exaggeration: f32,
-    ) {
-        self.terrain = Some(Terrain::Esri(crate::gis::terrain::EsriTerrain::default().with_exaggeration(exaggeration)));
-        self.map.ground.layers.clear();
-        self.map.ground.add_layer(layer);
-        self.map.ground.elevation_exaggeration = exaggeration;
-        self.sync_terrain_if_changed();
-    }
-
-    /// Sets or clears the active 3D digital elevation model (DEM) terrain.
-    ///
-    /// Accepts `None`, `AwsTerrain`, `EsriTerrain`, `Terrain`, or `Option<Terrain>`.
-    pub fn set_terrain(&mut self, terrain: impl crate::gis::terrain::IntoOptionalTerrain) {
-        self.terrain = terrain.into_optional_terrain();
-        self.sync_terrain_if_changed();
-    }
-
     /// Synchronizes changes in `self.terrain` to `self.terrain_mgr` and reloads renderer meshes if needed.
     pub fn sync_terrain_if_changed(&mut self) {
         if self.terrain == self.previous_terrain {
@@ -323,33 +302,6 @@ impl MapEngine {
         }
 
         self.previous_terrain = self.terrain.clone();
-    }
-
-    /// Enables or disables 3D digital elevation model (DEM) terrain streaming
-    pub fn set_terrain_enabled(&mut self, enabled: bool) {
-        if enabled {
-            if self.terrain.is_none() {
-                self.terrain = Some(Terrain::Esri(crate::gis::terrain::EsriTerrain::default()));
-            }
-        } else {
-            self.terrain = None;
-        }
-        self.sync_terrain_if_changed();
-    }
-
-    /// Sets the active 3D terrain elevation provider (e.g. AWS Terrarium or Esri WorldElevation3D)
-    pub fn set_terrain_provider(&mut self, provider: crate::gis::terrain::TerrainProvider) {
-        let exagg = self.terrain.as_ref().map(|t| t.exaggeration()).unwrap_or(1.0);
-        let new_t = match provider {
-            crate::gis::terrain::TerrainProvider::EsriTerrain3D => {
-                Terrain::Esri(crate::gis::terrain::EsriTerrain::default().with_exaggeration(exagg))
-            }
-            crate::gis::terrain::TerrainProvider::AwsTerrarium => {
-                Terrain::Aws(crate::gis::terrain::AwsTerrain::default().with_exaggeration(exagg))
-            }
-        };
-        self.terrain = Some(new_t);
-        self.sync_terrain_if_changed();
     }
 
     /// Attach a pre-configured RenderEngine
@@ -911,7 +863,14 @@ impl MapEngine {
             },
             MapCommand::Terrain(t_cmd) => match t_cmd {
                 TerrainCommand::SetEnabled(enabled) => {
-                    self.set_terrain_enabled(enabled);
+                    if enabled {
+                        if self.terrain.is_none() {
+                            self.terrain = Some(crate::gis::terrain::AwsTerrain::default().into());
+                        }
+                    } else {
+                        self.terrain = None;
+                    }
+                    self.sync_terrain_if_changed();
                 }
                 TerrainCommand::SetHeightExaggeration(exagg) => {
                     if let Some(t) = &mut self.terrain {

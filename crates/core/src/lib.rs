@@ -40,7 +40,7 @@ pub use gis::graphic::Graphic;
 pub use gis::renderer::Renderer;
 pub use gis::basemap::{BasemapManager, BasemapProvider};
 pub use gis::terrain::{
-    AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D, IntoOptionalTerrain,
+    AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D,
     TerrariumTerrain, Terrain, TerrainManager, TerrainProvider, TerrainShadingMode,
 };
 pub use gis::geojson_loader::GisFeature;

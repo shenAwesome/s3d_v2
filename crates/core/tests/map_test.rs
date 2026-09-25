@@ -384,13 +384,15 @@ fn test_terrain_syntax_and_classes() {
     assert_eq!(t_esri.provider(), TerrainProvider::EsriTerrain3D);
     assert_eq!(t_esri.exaggeration(), 0.5);
 
-    // 6. engine.set_terrain helper
-    engine.set_terrain(AwsTerrain::new().with_exaggeration(1.2));
+    // 6. Direct engine.terrain assignment
+    engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.2).into());
+    engine.sync_terrain_if_changed();
     assert!(engine.terrain.is_some());
     assert!(engine.terrain_mgr.is_enabled);
     assert_eq!(engine.terrain_mgr.height_exaggeration, 1.2);
 
-    engine.set_terrain(None);
+    engine.terrain = None;
+    engine.sync_terrain_if_changed();
     assert!(engine.terrain.is_none());
     assert!(!engine.terrain_mgr.is_enabled);
 }

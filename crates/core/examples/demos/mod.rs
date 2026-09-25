@@ -57,7 +57,7 @@ pub fn all_demos() -> Vec<DemoEntry> {
             source: include_str!("simple_map.rs"),
         },
         DemoEntry {
-            demo: Box::new(basemap_switcher::BasemapSwitcherDemo::new()),
+            demo: Box::new(basemap_switcher::BasemapSwitcherDemo::default()),
             source: include_str!("basemap_switcher.rs"),
         },
         DemoEntry {

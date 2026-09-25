@@ -244,35 +244,6 @@ impl From<EsriTerrain> for Terrain {
     }
 }
 
-/// Helper trait allowing flexible assignment to [`MapEngine::set_terrain`]
-pub trait IntoOptionalTerrain {
-    fn into_optional_terrain(self) -> Option<Terrain>;
-}
-
-impl IntoOptionalTerrain for Terrain {
-    fn into_optional_terrain(self) -> Option<Terrain> {
-        Some(self)
-    }
-}
-
-impl IntoOptionalTerrain for AwsTerrain {
-    fn into_optional_terrain(self) -> Option<Terrain> {
-        Some(Terrain::Aws(self))
-    }
-}
-
-impl IntoOptionalTerrain for EsriTerrain {
-    fn into_optional_terrain(self) -> Option<Terrain> {
-        Some(Terrain::Esri(self))
-    }
-}
-
-impl IntoOptionalTerrain for Option<Terrain> {
-    fn into_optional_terrain(self) -> Option<Terrain> {
-        self
-    }
-}
-
 /// Decodes Terrarium RGB values into elevation in meters.
 /// Formula: (R * 256 + G + B / 256) - 32768
 #[inline]

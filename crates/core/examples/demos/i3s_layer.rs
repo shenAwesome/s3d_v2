@@ -10,7 +10,8 @@ use s3d_core::engine::widget::MapResponse;
 use s3d_core::engine::GoToOptions;
 use s3d_core::gis::basemap::BasemapProvider;
 use s3d_core::gis::crs::{GeoCoord, ProjectionMode};
-use s3d_core::gis::layer::{Layer, SceneLayer};
+use s3d_core::gis::layer::SceneLayer;
+use s3d_core::gis::terrain::EsriTerrain;
 
 pub struct I3SPreset {
     pub name: &'static str,
@@ -35,7 +36,7 @@ pub const PRESETS: &[I3SPreset] = &[
         url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AB_Glen_Eira_Textured/SceneServer",
         longitude: 145.0373,
         latitude: -37.9027,
-        camera_distance: 1200.0,
+        camera_distance: 400.0,
         default_color: [240, 240, 240, 255],
     },
     I3SPreset {
@@ -123,7 +124,10 @@ impl Demo for I3SLayerDemo {
         engine.basemap.is_enabled = true;
         engine.basemap.provider = BasemapProvider::OpenStreetMap;
 
-        // 1. Configure and activate Esri I3S SceneLayer streaming
+        // 1. Configure 3D digital elevation model (DEM) terrain using Esri WorldElevation3D
+        engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.0).into());
+
+        // 2. Configure and activate Esri I3S SceneLayer streaming
         let mut scene_layer = SceneLayer::new(
             "i3s_layer",
             preset.name,
@@ -131,9 +135,10 @@ impl Demo for I3SLayerDemo {
         );
         let c = preset.default_color;
         scene_layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
+        scene_layer.set_cast_shadows(self.shadows);
         engine.add_layer(scene_layer);
 
-        // 2. Position camera overlooking 3D city scene
+        // 3. Position camera overlooking 3D city scene
         engine.goto(
             glam::Vec3::new(0.0, 50.0, 0.0),
             GoToOptions::immediate()
@@ -156,6 +161,7 @@ impl Demo for I3SLayerDemo {
                 let mut layer = SceneLayer::new("i3s_layer", preset.name, preset.url);
                 let c = preset.default_color;
                 layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
+                layer.set_cast_shadows(self.shadows);
                 engine.add_layer(layer);
                 engine.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
@@ -178,6 +184,7 @@ impl Demo for I3SLayerDemo {
                 let mut layer = SceneLayer::new("i3s_layer", preset.name, preset.url);
                 let c = preset.default_color;
                 layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
+                layer.set_cast_shadows(self.shadows);
                 engine.add_layer(layer);
                 engine.goto(
                     glam::Vec3::new(0.0, 50.0, 0.0),
@@ -197,10 +204,24 @@ impl Demo for I3SLayerDemo {
 
         ui.separator();
 
+        // 3D Terrain DEM toggle
+        let mut terrain_enabled = engine.terrain.is_some();
+        if ui.checkbox(&mut terrain_enabled, "Terrain").changed() {
+            if terrain_enabled {
+                engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.0).into());
+            } else {
+                engine.terrain = None;
+            }
+            changed = true;
+        }
+
         // Shadows toggle
         if ui.checkbox(&mut self.shadows, "Shadows").changed() {
             if let Some(layer) = engine.get_layer_mut::<SceneLayer>("i3s_layer") {
                 layer.set_cast_shadows(self.shadows);
+            }
+            if let Some(r) = &mut engine.renderer {
+                r.i3s_cast_shadows = self.shadows;
             }
             changed = true;
         }

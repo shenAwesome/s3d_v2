@@ -20,16 +20,9 @@ use s3d_core::gis::crs::{GeoCoord, ProjectOrigin};
 use s3d_core::gis::map::Basemap;
 use s3d_core::gis::terrain::{AwsTerrain, EsriTerrain, Terrain};
 
+#[derive(Default)]
 pub struct BasemapSwitcherDemo {
     selected_basemap: BasemapProvider,
-}
-
-impl BasemapSwitcherDemo {
-    pub fn new() -> Self {
-        Self {
-            selected_basemap: BasemapProvider::OpenStreetMap,
-        }
-    }
 }
 
 impl Demo for BasemapSwitcherDemo {
@@ -61,69 +54,70 @@ impl Demo for BasemapSwitcherDemo {
     fn controls(&mut self, ui: &mut egui::Ui, engine: &mut MapEngine) -> bool {
         let mut changed = false;
 
-        // Basemap selector buttons
+        // Basemap dropdown
         ui.label("Basemap:");
-        if ui.selectable_label(self.selected_basemap == BasemapProvider::OpenStreetMap, "OpenStreetMap").clicked() {
-            self.selected_basemap = BasemapProvider::OpenStreetMap;
-            engine.set_basemap(Basemap::osm());
-            changed = true;
-        }
-        if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriStreet, "Esri Streets").clicked() {
-            self.selected_basemap = BasemapProvider::EsriStreet;
-            engine.set_basemap(Basemap::esri_streets());
-            changed = true;
-        }
-        if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriTopo, "Esri Topo").clicked() {
-            self.selected_basemap = BasemapProvider::EsriTopo;
-            engine.set_basemap(Basemap::esri_topo());
-            changed = true;
-        }
-        if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriImagery, "Esri Imagery").clicked() {
-            self.selected_basemap = BasemapProvider::EsriImagery;
-            engine.set_basemap(Basemap::esri_imagery());
-            changed = true;
-        }
-        if ui.selectable_label(self.selected_basemap == BasemapProvider::None, "Grid").clicked() {
-            self.selected_basemap = BasemapProvider::None;
-            engine.set_basemap(Basemap::none());
-            changed = true;
-        }
+        let basemap_label = match self.selected_basemap {
+            BasemapProvider::OpenStreetMap => "OpenStreetMap",
+            BasemapProvider::EsriStreet => "Esri Streets",
+            BasemapProvider::EsriTopo => "Esri Topo",
+            BasemapProvider::EsriImagery => "Esri Imagery",
+            BasemapProvider::None => "Grid",
+        };
+        egui::ComboBox::from_id_salt("basemap_select")
+            .selected_text(basemap_label)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(self.selected_basemap == BasemapProvider::OpenStreetMap, "OpenStreetMap").clicked() {
+                    self.selected_basemap = BasemapProvider::OpenStreetMap;
+                    engine.set_basemap(Basemap::osm());
+                    changed = true;
+                }
+                if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriStreet, "Esri Streets").clicked() {
+                    self.selected_basemap = BasemapProvider::EsriStreet;
+                    engine.set_basemap(Basemap::esri_streets());
+                    changed = true;
+                }
+                if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriTopo, "Esri Topo").clicked() {
+                    self.selected_basemap = BasemapProvider::EsriTopo;
+                    engine.set_basemap(Basemap::esri_topo());
+                    changed = true;
+                }
+                if ui.selectable_label(self.selected_basemap == BasemapProvider::EsriImagery, "Esri Imagery").clicked() {
+                    self.selected_basemap = BasemapProvider::EsriImagery;
+                    engine.set_basemap(Basemap::esri_imagery());
+                    changed = true;
+                }
+                if ui.selectable_label(self.selected_basemap == BasemapProvider::None, "Grid").clicked() {
+                    self.selected_basemap = BasemapProvider::None;
+                    engine.set_basemap(Basemap::none());
+                    changed = true;
+                }
+            });
 
         ui.separator();
 
-        // 3D Terrain DEM toggle
-        let mut terrain_enabled = engine.terrain.is_some();
-        if ui.checkbox(&mut terrain_enabled, "Terrain").changed() {
-            if terrain_enabled {
-                engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
-            } else {
-                engine.terrain = None;
-            }
-            changed = true;
-        }
-
-        // Show active terrain source & allow switching terrain provider
-        if engine.terrain.is_some() {
-            ui.label("DEM:");
-            let is_aws = matches!(engine.terrain, Some(Terrain::Aws(_)));
-            let is_esri = matches!(engine.terrain, Some(Terrain::Esri(_)));
-
-            if ui.selectable_label(is_aws, "AWS Terrarium (RGB PNG)")
-                .on_hover_text("AWS Open Data Terrarium: 256×256 RGB PNG\nURL: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png")
-                .clicked() && !is_aws
-            {
-                engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
-                changed = true;
-            }
-
-            if ui.selectable_label(is_esri, "Esri Terrain3D (LERC)")
-                .on_hover_text("Esri WorldElevation3D: 257×257 LERC Float32\nURL: https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer")
-                .clicked() && !is_esri
-            {
-                engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.5).into());
-                changed = true;
-            }
-        }
+        // 3D Terrain DEM dropdown
+        ui.label("Terrain:");
+        let (terrain_label, is_none, is_aws, is_esri) = match &engine.terrain {
+            None => ("Off", true, false, false),
+            Some(Terrain::Aws(_)) => ("AWS Terrarium", false, true, false),
+            Some(Terrain::Esri(_)) => ("Esri Terrain3D", false, false, true),
+        };
+        egui::ComboBox::from_id_salt("terrain_select")
+            .selected_text(terrain_label)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(is_none, "Off").clicked() && !is_none {
+                    engine.terrain = None;
+                    changed = true;
+                }
+                if ui.selectable_label(is_aws, "AWS Terrarium").clicked() && !is_aws {
+                    engine.terrain = Some(AwsTerrain::new().with_exaggeration(1.5).into());
+                    changed = true;
+                }
+                if ui.selectable_label(is_esri, "Esri Terrain3D").clicked() && !is_esri {
+                    engine.terrain = Some(EsriTerrain::new().with_exaggeration(1.5).into());
+                    changed = true;
+                }
+            });
 
         changed
     }

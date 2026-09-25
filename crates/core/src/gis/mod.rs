@@ -60,6 +60,6 @@ pub use source::{
 };
 
 pub use terrain::{
-    AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D, IntoOptionalTerrain,
+    AwsTerrain, AwsTerrariumTerrain, EsriTerrain, EsriTerrain3D,
     TerrariumTerrain, Terrain, TerrainManager, TerrainProvider, TerrainShadingMode,
 };

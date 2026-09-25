@@ -550,6 +550,7 @@ pub struct SceneLayer {
     pub opacity: f32,
     pub tint: Option<[f32; 4]>,
     pub lod_threshold_scale: f32,
+    pub cast_shadows: bool,
     pub manager: crate::gis::i3s::I3SManager,
 }
 
@@ -561,6 +562,7 @@ impl std::fmt::Debug for SceneLayer {
             .field("url", &self.url)
             .field("visible", &self.visible)
             .field("opacity", &self.opacity)
+            .field("cast_shadows", &self.cast_shadows)
             .finish()
     }
 }
@@ -580,6 +582,7 @@ impl SceneLayer {
             opacity: 1.0,
             tint: None,
             lod_threshold_scale: 1.0,
+            cast_shadows: true,
             manager,
         }
     }
@@ -591,6 +594,19 @@ impl SceneLayer {
 
     pub fn set_tint(&mut self, tint: [f32; 4]) {
         self.tint = Some(tint);
+    }
+
+    pub fn with_cast_shadows(mut self, cast: bool) -> Self {
+        self.cast_shadows = cast;
+        self
+    }
+
+    pub fn set_cast_shadows(&mut self, cast: bool) {
+        self.cast_shadows = cast;
+    }
+
+    pub fn cast_shadows(&self) -> bool {
+        self.cast_shadows
     }
 }
 
@@ -608,10 +624,13 @@ impl Layer for SceneLayer {
         self.opacity = opacity.clamp(0.0, 1.0);
         self.manager.opacity = self.opacity;
     }
+    fn cast_shadows(&self) -> bool { self.cast_shadows }
+    fn set_cast_shadows(&mut self, cast: bool) { self.cast_shadows = cast; }
     fn descriptor(&self) -> LayerDescriptor {
         let mut desc = LayerDescriptor::new(&self.id, &self.title, "i3s");
         desc.visible = self.visible;
         desc.opacity = self.opacity;
+        desc.cast_shadows = self.cast_shadows;
         desc.url = Some(self.url.clone());
         desc
     }
@@ -641,8 +660,10 @@ impl Layer for SceneLayer {
 
     fn sync_gpu(&mut self, ctx: &mut LayerGpuContext) {
         if !self.visible {
+            ctx.renderer.i3s_cast_shadows = false;
             return;
         }
+        ctx.renderer.i3s_cast_shadows = self.cast_shadows;
         let new_i3s_nodes = self.manager.drain_completed();
         let server_sym = self.manager.server_symbol.as_ref();
         let default_edge = server_sym.map(|s| s.edge_enabled);
@@ -678,6 +699,7 @@ impl Layer for SceneLayer {
 
     fn destroy(&mut self, ctx: &mut LayerGpuContext) {
         ctx.renderer.clear_i3s_tiles();
+        ctx.renderer.i3s_cast_shadows = true;
         ctx.collider.remove_features_with_prefix(&format!("{}_feat_", self.id));
     }
 
