@@ -568,12 +568,9 @@ impl I3SManager {
                     let (center_enu, axes, half_size) = obb.to_engine_obb(origin);
                     let radius = obb.radius() as f32;
 
-                    // Near-field frustum culling bypass:
-                    // If camera is close to or inside the bounding sphere (dist <= radius * 1.25),
-                    // near-plane clipping must NOT cull the node, preventing building facades from disappearing!
-                    let dist_to_eye = (center_enu - camera_eye).length();
+                    // Exact frustum culling: sphere early-out + exact OBB separating axis test (no loose distance bypass).
+                    // Root node (index 0) always passes so the hierarchy can be traversed.
                     let in_frustum = node.index == 0
-                        || dist_to_eye <= radius * 1.25
                         || (frustum.intersects_sphere(center_enu, radius) && frustum.intersects_obb(center_enu, axes, half_size));
 
                     (in_frustum, center_enu, radius)
@@ -628,18 +625,12 @@ impl I3SManager {
 
             if wants_split && has_children {
                 if let Some(ref children_list) = children {
-                    let mut all_children_ready = true;
-                    let mut in_frustum_children_count = 0;
-                    let mut in_frustum_children = Vec::new();
-
                     for &child_id in children_list {
                         let child_in_frustum = if let Some(cn) = self.node_cache.get(&child_id) {
                             if let Some(obb) = &cn.obb {
                                 let (c_enu, axes, half_size) = obb.to_engine_obb(origin);
                                 let r = obb.radius() as f32;
-                                let c_dist = (c_enu - camera_eye).length();
-                                c_dist <= r * 1.25
-                                    || (frustum.intersects_sphere(c_enu, r) && frustum.intersects_obb(c_enu, axes, half_size))
+                                frustum.intersects_sphere(c_enu, r) && frustum.intersects_obb(c_enu, axes, half_size)
                             } else {
                                 true
                             }
@@ -648,47 +639,15 @@ impl I3SManager {
                         };
 
                         if child_in_frustum {
-                            in_frustum_children_count += 1;
                             let child_page = child_id / nodes_per_page;
                             if !self.cached_pages.contains(&child_page) {
                                 self.fetch_node_page(child_page);
                             }
-
-                            // Check if child node has loaded its mesh (if it has one)
-                            let child_ready = if let Some(cn) = self.node_cache.get(&child_id) {
-                                if cn.mesh.is_some() {
-                                    self.loaded_node_ids.contains(&child_id)
-                                } else {
-                                    true
-                                }
-                            } else {
-                                false
-                            };
-
-                            if !child_ready {
-                                all_children_ready = false;
-                            }
-
-                            in_frustum_children.push(child_id);
-                        }
-                    }
-
-                    if all_children_ready && in_frustum_children_count > 0 {
-                        // Refinement ready: recurse down to children, do NOT draw parent
-                        for child_id in in_frustum_children {
-                            queue.push_back(child_id);
-                        }
-                    } else if has_mesh && self.loaded_node_ids.contains(&node_id) {
-                        // Refinement still streaming: keep parent drawn, and request in-frustum children
-                        // Do NOT draw children simultaneously, completely preventing Z-fighting & texture flickering!
-                        raw_selected.push(node_id);
-                        self.nodes_to_request.extend(in_frustum_children);
-                    } else {
-                        // Parent has no mesh or is not loaded yet: traverse whatever children are in frustum
-                        for child_id in in_frustum_children {
                             queue.push_back(child_id);
                         }
                     }
+
+                    // Directly load what is required: do NOT keep parent as fallback!
                 }
             } else if has_mesh {
                 // Target leaf / required LOD node
@@ -737,9 +696,8 @@ impl I3SManager {
             Err(_) => return,
         };
 
-        // All nodes needed: visible placeholder/leaf nodes plus in-frustum children being loaded
-        let mut needed: HashSet<u32> = node_ids.iter().copied().collect();
-        needed.extend(&self.nodes_to_request);
+        // All nodes needed: visible target nodes for the current camera viewpoint
+        let needed: HashSet<u32> = node_ids.iter().copied().collect();
 
         if needed.is_empty() {
             return;

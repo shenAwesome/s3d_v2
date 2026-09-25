@@ -207,26 +207,12 @@ impl I3SGeometryDecoder {
             positions.push([enu.x, enu.y, enu.z]);
 
             // 2. Normal vector (default to Up if not provided)
-            // In the OGC I3S specification, vertex normals are defined in Earth-Centered Earth-Fixed (ECEF) coordinates.
-            // We transform them to local topocentric East-North-Up (ENU) Engine space: +X = East, +Y = Up, -Z = North.
             if let Some(ns) = norm_slice {
                 let n_offset = i * 12;
                 let nx = ns.get(n_offset..n_offset + 4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(0.0);
                 let ny = ns.get(n_offset + 4..n_offset + 8).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(1.0);
                 let nz = ns.get(n_offset + 8..n_offset + 12).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes).unwrap_or(0.0);
-
-                let lat_rad = (lat as f64).to_radians();
-                let lon_rad = (lon as f64).to_radians();
-                let sin_lat = lat_rad.sin() as f32;
-                let cos_lat = lat_rad.cos() as f32;
-                let sin_lon = lon_rad.sin() as f32;
-                let cos_lon = lon_rad.cos() as f32;
-
-                let east = -sin_lon * nx + cos_lon * ny;
-                let north = -sin_lat * cos_lon * nx - sin_lat * sin_lon * ny + cos_lat * nz;
-                let up = cos_lat * cos_lon * nx + cos_lat * sin_lon * ny + sin_lat * nz;
-
-                normals.push([east, up, -north]);
+                normals.push([nx, nz, -ny]); // Orient to engine Y-up
             } else {
                 normals.push([0.0, 1.0, 0.0]);
             }

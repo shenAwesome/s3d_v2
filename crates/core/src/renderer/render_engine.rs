@@ -905,7 +905,7 @@ impl RenderEngine {
                 contents: bytemuck::bytes_of(&ObjectUniformGpu {
                     model: Mat4::IDENTITY.to_cols_array_2d(),
                     color_override: col_override,
-                    shadow_color: [0.0, 0.0, 0.0, edge_val],
+                    shadow_color: [0.10, 0.12, 0.18, edge_val],
                 }),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
@@ -1759,16 +1759,32 @@ impl RenderEngine {
 
                 // 3. Draw active I3S 3D SceneLayer buildings with PBR sunlight and ambient shading
                 if !self.active_i3s_nodes_to_draw.is_empty() {
-                    main_pass.set_pipeline(&self.pipelines.threedtile_pipeline);
-                    main_pass.set_bind_group(0, &self.global_bind_group, &[]);
-                    main_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
-
                     let current_frame = self.frame_count;
+                    let mut current_pipeline_is_textured: Option<bool> = None;
+
                     for node_id in &self.active_i3s_nodes_to_draw {
                         if let Some(tile) = self.i3s_gpu_tiles.get_mut(node_id) {
                             tile.last_drawn_frame = current_frame;
-                            main_pass.set_bind_group(1, &tile.bind_group, &[]);
-                            main_pass.set_bind_group(3, &tile.texture_bind_group, &[]);
+
+                            if tile.has_texture {
+                                if current_pipeline_is_textured != Some(true) {
+                                    main_pass.set_pipeline(&self.pipelines.threedtile_pipeline);
+                                    main_pass.set_bind_group(0, &self.global_bind_group, &[]);
+                                    main_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
+                                    current_pipeline_is_textured = Some(true);
+                                }
+                                main_pass.set_bind_group(1, &tile.bind_group, &[]);
+                                main_pass.set_bind_group(3, &tile.texture_bind_group, &[]);
+                            } else {
+                                if current_pipeline_is_textured != Some(false) {
+                                    main_pass.set_pipeline(&self.pipelines.main_pipeline);
+                                    main_pass.set_bind_group(0, &self.global_bind_group, &[]);
+                                    main_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
+                                    current_pipeline_is_textured = Some(false);
+                                }
+                                main_pass.set_bind_group(1, &tile.bind_group, &[]);
+                            }
+
                             main_pass.set_vertex_buffer(0, tile.mesh.vertex_buffer.slice(..));
                             main_pass.set_index_buffer(tile.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                             main_pass.draw_indexed(0..tile.mesh.num_indices, 0, 0..1);

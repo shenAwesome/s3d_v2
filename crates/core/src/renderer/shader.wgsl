@@ -266,7 +266,7 @@ fn compute_shadow(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>)
     for (var i = 0; i < 16; i++) {
         let offset = POISSON_SAMPLES[i] * filter_radius;
         let delta_z = clamp(dot(dz_duv, offset), -0.005, 0.005);
-        let tap_depth = shadow_depth + delta_z;
+        let tap_depth = min(shadow_depth + delta_z, 0.9999);
         shadow_accum += textureSampleCompareLevel(
             t_shadow,
             s_shadow,
@@ -276,8 +276,9 @@ fn compute_shadow(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>)
     }
 
     // Smooth boundary fade at the edge of the shadow frustum so no hard angular cutoff appears
-    let border_fade = smoothstep(0.0, 0.02, uv.x) * smoothstep(1.0, 0.98, uv.x)
-                    * smoothstep(0.0, 0.02, uv.y) * smoothstep(1.0, 0.98, uv.y);
+    let border_fade = smoothstep(0.0, 0.04, uv.x) * smoothstep(1.0, 0.96, uv.x)
+                    * smoothstep(0.0, 0.04, uv.y) * smoothstep(1.0, 0.96, uv.y)
+                    * smoothstep(1.0, 0.96, current_depth) * smoothstep(0.0, 0.04, current_depth);
 
     res.visibility = mix(1.0, shadow_accum / 16.0, border_fade);
 

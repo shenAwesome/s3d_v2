@@ -28,7 +28,7 @@ pub const PRESETS: &[I3SPreset] = &[
         url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AB_Melbourne_WM/SceneServer",
         longitude: 144.9631,
         latitude: -37.8136,
-        camera_distance: 1200.0,
+        camera_distance: 800.0,
         default_color: [240, 243, 246, 255],
     },
     I3SPreset {
@@ -136,6 +136,7 @@ impl Demo for I3SLayerDemo {
         let c = preset.default_color;
         scene_layer.set_tint([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]);
         scene_layer.set_cast_shadows(self.shadows);
+        engine.sunlight_enabled = self.shadows;
         engine.add_layer(scene_layer);
 
         // 3. Position camera overlooking 3D city scene
@@ -144,7 +145,7 @@ impl Demo for I3SLayerDemo {
             GoToOptions::immediate()
                 .with_distance(preset.camera_distance)
                 .with_heading(-40.0)
-                .with_pitch(50.0),
+                .with_pitch(32.0),
         );
     }
 
@@ -168,7 +169,7 @@ impl Demo for I3SLayerDemo {
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
                         .with_heading(-40.0)
-                        .with_pitch(50.0),
+                        .with_pitch(32.0),
                 );
                 changed = true;
             }
@@ -191,7 +192,7 @@ impl Demo for I3SLayerDemo {
                     GoToOptions::immediate()
                         .with_distance(preset.camera_distance)
                         .with_heading(-40.0)
-                        .with_pitch(50.0),
+                        .with_pitch(32.0),
                 );
                 #[cfg(target_arch = "wasm32")]
                 if let Some(window) = web_sys::window() {
@@ -223,6 +224,7 @@ impl Demo for I3SLayerDemo {
             if let Some(r) = &mut engine.renderer {
                 r.i3s_cast_shadows = self.shadows;
             }
+            engine.sunlight_enabled = self.shadows;
             changed = true;
         }
 
