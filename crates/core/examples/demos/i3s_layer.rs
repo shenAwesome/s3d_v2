@@ -36,7 +36,7 @@ pub const PRESETS: &[I3SPreset] = &[
         url: "https://spatial.planning.vic.gov.au/server/rest/services/Hosted/AB_Glen_Eira_Textured/SceneServer",
         longitude: 145.0373,
         latitude: -37.9027,
-        camera_distance: 400.0,
+        camera_distance: 180.0,
         default_color: [240, 240, 240, 255],
     },
     I3SPreset {

@@ -177,13 +177,13 @@ impl I3SManager {
                     };
 
                     let service_slug = crate::gis::cache::DiskCacheManager::service_to_slug(&geom_url);
-                    let mut bytes = crate::gis::cache::DiskCacheManager::read_i3s_geometry(&service_slug, geom_info.resource);
+                    let mut bytes = crate::gis::cache::DiskCacheManager::read_i3s_geometry(&service_slug, node_id);
 
                     if bytes.is_none() {
                         if let Ok(resp) = agent.get(&geom_url).call() {
                             let mut downloaded = Vec::new();
                             if resp.into_reader().read_to_end(&mut downloaded).is_ok() {
-                                crate::gis::cache::DiskCacheManager::write_i3s_geometry(&service_slug, geom_info.resource, &downloaded);
+                                crate::gis::cache::DiskCacheManager::write_i3s_geometry(&service_slug, node_id, &downloaded);
                                 bytes = Some(downloaded);
                             }
                         }
@@ -191,13 +191,13 @@ impl I3SManager {
 
                     // Optional texture downloading & decoding
                     let mut image_rgba = None;
-                    if let Some((ref tex_url, tex_res_id)) = texture_info {
-                        let mut tex_bytes = crate::gis::cache::DiskCacheManager::read_i3s_texture(&service_slug, tex_res_id);
+                    if let Some((ref tex_url, _)) = texture_info {
+                        let mut tex_bytes = crate::gis::cache::DiskCacheManager::read_i3s_texture(&service_slug, node_id);
                         if tex_bytes.is_none() {
                             if let Ok(resp) = agent.get(tex_url).call() {
                                 let mut downloaded = Vec::new();
                                 if resp.into_reader().read_to_end(&mut downloaded).is_ok() {
-                                    crate::gis::cache::DiskCacheManager::write_i3s_texture(&service_slug, tex_res_id, &downloaded);
+                                    crate::gis::cache::DiskCacheManager::write_i3s_texture(&service_slug, node_id, &downloaded);
                                     tex_bytes = Some(downloaded);
                                 }
                             }
@@ -544,6 +544,7 @@ impl I3SManager {
         let mut visited = HashSet::new();
         let mut raw_selected = Vec::new();
 
+        self.nodes_to_request.clear();
         queue.push_back(0);
 
         while let Some(node_id) = queue.pop_front() {
@@ -629,6 +630,7 @@ impl I3SManager {
                 if let Some(ref children_list) = children {
                     let mut all_children_ready = true;
                     let mut in_frustum_children_count = 0;
+                    let mut in_frustum_children = Vec::new();
 
                     for &child_id in children_list {
                         let child_in_frustum = if let Some(cn) = self.node_cache.get(&child_id) {
@@ -667,15 +669,25 @@ impl I3SManager {
                                 all_children_ready = false;
                             }
 
-                            queue.push_back(child_id);
+                            in_frustum_children.push(child_id);
                         }
                     }
 
-                    // HLOD Fallback: If this parent node has a mesh already in GPU memory,
-                    // and its refined children are still streaming, keep the parent drawn
-                    // to prevent buildings from disappearing!
-                    if has_mesh && self.loaded_node_ids.contains(&node_id) && (!all_children_ready || in_frustum_children_count == 0) {
+                    if all_children_ready && in_frustum_children_count > 0 {
+                        // Refinement ready: recurse down to children, do NOT draw parent
+                        for child_id in in_frustum_children {
+                            queue.push_back(child_id);
+                        }
+                    } else if has_mesh && self.loaded_node_ids.contains(&node_id) {
+                        // Refinement still streaming: keep parent drawn, and request in-frustum children
+                        // Do NOT draw children simultaneously, completely preventing Z-fighting & texture flickering!
                         raw_selected.push(node_id);
+                        self.nodes_to_request.extend(in_frustum_children);
+                    } else {
+                        // Parent has no mesh or is not loaded yet: traverse whatever children are in frustum
+                        for child_id in in_frustum_children {
+                            queue.push_back(child_id);
+                        }
                     }
                 }
             } else if has_mesh {
@@ -762,7 +774,7 @@ impl I3SManager {
                                     .and_then(|d| d.geometry_buffers.first())
                                     .cloned();
 
-                                let url = format!("{}/layers/0/nodes/{}/geometries/0", self.service_url, geom_info.resource);
+                                let url = format!("{}/layers/0/nodes/{}/geometries/0", self.service_url, node_id);
                                 let base_color = self.layer_metadata.as_ref()
                                     .and_then(|m| m.material_definitions.as_ref())
                                     .and_then(|defs| {
@@ -774,10 +786,9 @@ impl I3SManager {
                                     .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
                                 let texture_info = if has_textures {
-                                    mesh.material.as_ref().map(|mat| {
-                                        let mat_res = mat.resource.unwrap_or(geom_info.resource);
-                                        let tex_url = format!("{}/layers/0/nodes/{}/textures/0", self.service_url, mat_res);
-                                        (tex_url, mat_res)
+                                    mesh.material.as_ref().map(|_| {
+                                        let tex_url = format!("{}/layers/0/nodes/{}/textures/0", self.service_url, node_id);
+                                        (tex_url, node_id)
                                     })
                                 } else {
                                     None
@@ -854,12 +865,20 @@ impl I3SManager {
                                 decoded.node_id = node_id;
                                 if let Some((tex_url, _)) = texture_info {
                                     let tx_final = tx_clone.clone();
+                                    let url_for_log = tex_url.clone();
                                     crate::gis::platform::http::fetch_bytes(&tex_url, move |tex_res| {
                                         if let Ok(tb) = tex_res {
-                                            if let Ok(dyn_img) = image::load_from_memory(&tb) {
-                                                let rgba = dyn_img.to_rgba8();
-                                                decoded.image_rgba = Some(std::sync::Arc::new((rgba.width(), rgba.height(), rgba.into_raw())));
+                                            match image::load_from_memory(&tb) {
+                                                Ok(dyn_img) => {
+                                                    let rgba = dyn_img.to_rgba8();
+                                                    decoded.image_rgba = Some(std::sync::Arc::new((rgba.width(), rgba.height(), rgba.into_raw())));
+                                                }
+                                                Err(e) => {
+                                                    log::warn!("[I3S] Failed to decode texture for node {}: {}", node_id, e);
+                                                }
                                             }
+                                        } else {
+                                            log::warn!("[I3S] Failed to fetch texture for node {} from {}", node_id, url_for_log);
                                         }
                                         let _ = tx_final.send(I3SDownloadResult::Geometry(Box::new(decoded)));
                                     });

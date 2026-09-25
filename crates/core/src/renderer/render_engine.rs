@@ -890,9 +890,11 @@ impl RenderEngine {
             &mesh_to_upload,
             [base_col[0], base_col[1], base_col[2], base_col[3] * opacity],
         ) {
-            // When mesh has its own binary vertex colors or photo textures, pass [0, 0, 0, 0]
-            // so vs_main passes through vertex colors untouched!
-            let col_override = if has_vertex_colors || has_texture {
+            // When mesh has photo textures, pass [0, 0, 0, 0] so it uses the texture without any colour fill.
+            // For non-textured meshes, apply the layer's color fill / tint.
+            let col_override = if has_texture {
+                [0.0, 0.0, 0.0, 0.0]
+            } else if has_vertex_colors && decoded.raw_mesh.colors.iter().any(|c| (c[0] - 1.0).abs() > 0.01 || (c[1] - 1.0).abs() > 0.01 || (c[2] - 1.0).abs() > 0.01) {
                 [0.0, 0.0, 0.0, 0.0]
             } else {
                 [tint[0] * base_col[0], tint[1] * base_col[1], tint[2] * base_col[2], opacity.clamp(0.05, 1.0) * base_col[3]]
@@ -1020,7 +1022,7 @@ impl RenderEngine {
     pub fn update_i3s_visuals(&self, tint: [f32; 3], opacity: f32, edge_enabled: bool) {
         let edge_val = if edge_enabled { 1.0 } else { 0.0 };
         for tile in self.i3s_gpu_tiles.values() {
-            let col_override = if tile.has_vertex_colors || tile.has_texture {
+            let col_override = if tile.has_texture {
                 [0.0, 0.0, 0.0, 0.0]
             } else {
                 [tint[0], tint[1], tint[2], opacity.clamp(0.05, 1.0)]
